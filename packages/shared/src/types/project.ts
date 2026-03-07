@@ -5,6 +5,11 @@ export interface ProjectGoalRef {
   title: string;
 }
 
+export interface ProjectWorkspaceMetadata {
+  explanation?: string;
+  [key: string]: unknown;
+}
+
 export interface ProjectWorkspace {
   id: string;
   companyId: string;
@@ -13,7 +18,7 @@ export interface ProjectWorkspace {
   cwd: string | null;
   repoUrl: string | null;
   repoRef: string | null;
-  metadata: Record<string, unknown> | null;
+  metadata: ProjectWorkspaceMetadata | null;
   isPrimary: boolean;
   createdAt: Date;
   updatedAt: Date;

@@ -97,6 +97,20 @@ export async function testEnvironment(
 
   const configApiKey = env.ANTHROPIC_API_KEY;
   const hostApiKey = process.env.ANTHROPIC_API_KEY;
+  const configBaseUrl = env.ANTHROPIC_BASE_URL;
+  const hostBaseUrl = process.env.ANTHROPIC_BASE_URL;
+  if (isNonEmpty(configBaseUrl) || isNonEmpty(hostBaseUrl)) {
+    const baseUrl = isNonEmpty(configBaseUrl) ? configBaseUrl : hostBaseUrl;
+    const source = isNonEmpty(configBaseUrl) ? "adapter config env" : "server environment";
+    checks.push({
+      code: "claude_anthropic_base_url_configured",
+      level: "info",
+      message: "ANTHROPIC_BASE_URL is configured.",
+      detail: `Using ${baseUrl} from ${source}.`,
+      hint: "Use this for Anthropic-compatible gateways (for example an Ollama bridge endpoint).",
+    });
+  }
+
   if (isNonEmpty(configApiKey) || isNonEmpty(hostApiKey)) {
     const source = isNonEmpty(configApiKey) ? "adapter config env" : "server environment";
     checks.push({

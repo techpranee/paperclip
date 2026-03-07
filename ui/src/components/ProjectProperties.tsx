@@ -6,6 +6,7 @@ import { StatusBadge } from "./StatusBadge";
 import { cn, formatDate } from "../lib/utils";
 import { goalsApi } from "../api/goals";
 import { projectsApi } from "../api/projects";
+import { ApiError } from "../api/client";
 import { useCompany } from "../context/CompanyContext";
 import { queryKeys } from "../lib/queryKeys";
 import { statusBadge, statusBadgeDefault } from "../lib/status-colors";
@@ -83,6 +84,9 @@ export function ProjectProperties({ project, onUpdate }: ProjectPropertiesProps)
   const [workspaceMode, setWorkspaceMode] = useState<"local" | "repo" | null>(null);
   const [workspaceCwd, setWorkspaceCwd] = useState("");
   const [workspaceRepoUrl, setWorkspaceRepoUrl] = useState("");
+  const [workspaceRepoExplanation, setWorkspaceRepoExplanation] = useState("");
+  const [editingWorkspaceId, setEditingWorkspaceId] = useState<string | null>(null);
+  const [editingWorkspaceExplanation, setEditingWorkspaceExplanation] = useState("");
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
 
   const { data: allGoals } = useQuery({
@@ -108,10 +112,17 @@ export function ProjectProperties({ project, onUpdate }: ProjectPropertiesProps)
   const workspaces = project.workspaces ?? [];
 
   const invalidateProject = () => {
+    queryClient.invalidateQueries({ queryKey: ["projects", "detail"] });
     queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(project.id) });
     if (selectedCompanyId) {
       queryClient.invalidateQueries({ queryKey: queryKeys.projects.list(selectedCompanyId) });
     }
+  };
+
+  const getApiErrorMessage = (error: unknown, fallback: string) => {
+    if (error instanceof ApiError) return error.message;
+    if (error instanceof Error && error.message.trim().length > 0) return error.message;
+    return fallback;
   };
 
   const createWorkspace = useMutation({
@@ -119,9 +130,13 @@ export function ProjectProperties({ project, onUpdate }: ProjectPropertiesProps)
     onSuccess: () => {
       setWorkspaceCwd("");
       setWorkspaceRepoUrl("");
+      setWorkspaceRepoExplanation("");
       setWorkspaceMode(null);
       setWorkspaceError(null);
       invalidateProject();
+    },
+    onError: (error) => {
+      setWorkspaceError(getApiErrorMessage(error, "Failed to save workspace."));
     },
   });
 
@@ -133,6 +148,9 @@ export function ProjectProperties({ project, onUpdate }: ProjectPropertiesProps)
     mutationFn: ({ workspaceId, data }: { workspaceId: string; data: Record<string, unknown> }) =>
       projectsApi.updateWorkspace(project.id, workspaceId, data),
     onSuccess: invalidateProject,
+    onError: (error) => {
+      setWorkspaceError(getApiErrorMessage(error, "Failed to update workspace."));
+    },
   });
 
   const removeGoal = (goalId: string) => {
@@ -191,6 +209,65 @@ export function ProjectProperties({ project, onUpdate }: ProjectPropertiesProps)
     }
   };
 
+  const getWorkspaceExplanation = (workspace: Project["workspaces"][number]) => {
+    const metadata = workspace.metadata;
+    if (!metadata) return null;
+    const parsedMetadata = (() => {
+      if (typeof metadata === "object") return metadata as Record<string, unknown>;
+      if (typeof metadata === "string") {
+        try {
+          const parsed = JSON.parse(metadata);
+          if (typeof parsed === "object" && parsed !== null) {
+            return parsed as Record<string, unknown>;
+          }
+        } catch {
+          return null;
+        }
+      }
+      return null;
+    })();
+    if (!parsedMetadata) return null;
+    const explanation = parsedMetadata.explanation;
+    if (typeof explanation !== "string") return null;
+    const trimmed = explanation.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  };
+
+  const beginEditWorkspaceExplanation = (workspace: Project["workspaces"][number]) => {
+    setEditingWorkspaceId(workspace.id);
+    setEditingWorkspaceExplanation(getWorkspaceExplanation(workspace) ?? "");
+  };
+
+  const cancelEditWorkspaceExplanation = () => {
+    setEditingWorkspaceId(null);
+    setEditingWorkspaceExplanation("");
+  };
+
+  const saveWorkspaceExplanation = (workspace: Project["workspaces"][number]) => {
+    const nextExplanation = editingWorkspaceExplanation.trim();
+    const metadata = workspace.metadata && typeof workspace.metadata === "object"
+      ? { ...(workspace.metadata as Record<string, unknown>) }
+      : {};
+    if (nextExplanation.length > 0) {
+      metadata.explanation = nextExplanation;
+    } else {
+      delete metadata.explanation;
+    }
+    const hasMetadataEntries = Object.keys(metadata).length > 0;
+
+    updateWorkspace.mutate(
+      {
+        workspaceId: workspace.id,
+        data: { metadata: hasMetadataEntries ? metadata : null },
+      },
+      {
+        onSuccess: () => {
+          cancelEditWorkspaceExplanation();
+        },
+      },
+    );
+  };
+
   const submitLocalWorkspace = () => {
     const cwd = workspaceCwd.trim();
     if (!isAbsolutePath(cwd)) {
@@ -206,6 +283,7 @@ export function ProjectProperties({ project, onUpdate }: ProjectPropertiesProps)
 
   const submitRepoWorkspace = () => {
     const repoUrl = workspaceRepoUrl.trim();
+    const repoExplanation = workspaceRepoExplanation.trim();
     if (!isGitHubRepoUrl(repoUrl)) {
       setWorkspaceError("Repo workspace must use a valid GitHub repo URL.");
       return;
@@ -215,6 +293,7 @@ export function ProjectProperties({ project, onUpdate }: ProjectPropertiesProps)
       name: deriveWorkspaceNameFromRepo(repoUrl),
       cwd: REPO_ONLY_CWD_SENTINEL,
       repoUrl,
+      ...(repoExplanation.length > 0 ? { metadata: { explanation: repoExplanation } } : {}),
     });
   };
 
@@ -386,25 +465,76 @@ export function ProjectProperties({ project, onUpdate }: ProjectPropertiesProps)
                     </div>
                   ) : null}
                   {workspace.repoUrl ? (
-                    <div className="flex items-center justify-between gap-2 py-1">
-                      <a
-                        href={workspace.repoUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground hover:underline"
-                      >
-                        <Github className="h-3 w-3 shrink-0" />
-                        <span className="truncate">{formatGitHubRepo(workspace.repoUrl)}</span>
-                        <ExternalLink className="h-3 w-3 shrink-0" />
-                      </a>
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        onClick={() => clearRepoWorkspace(workspace)}
-                        aria-label="Delete workspace repo"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
+                    <div className="py-1 space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <a
+                          href={workspace.repoUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground hover:underline"
+                        >
+                          <Github className="h-3 w-3 shrink-0" />
+                          <span className="truncate">{formatGitHubRepo(workspace.repoUrl)}</span>
+                          <ExternalLink className="h-3 w-3 shrink-0" />
+                        </a>
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          onClick={() => clearRepoWorkspace(workspace)}
+                          aria-label="Delete workspace repo"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </div>
+                      {editingWorkspaceId === workspace.id ? (
+                        <div className="space-y-1.5">
+                          <textarea
+                            className="w-full rounded border border-border bg-transparent px-2 py-1 text-xs outline-none resize-y min-h-[64px]"
+                            value={editingWorkspaceExplanation}
+                            onChange={(e) => setEditingWorkspaceExplanation(e.target.value)}
+                            placeholder="Explain what this repo handles."
+                          />
+                          <div className="flex items-center gap-2">
+                            <Button
+                              variant="outline"
+                              size="xs"
+                              className="h-6 px-2"
+                              disabled={updateWorkspace.isPending}
+                              onClick={() => saveWorkspaceExplanation(workspace)}
+                            >
+                              Save note
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="xs"
+                              className="h-6 px-2"
+                              onClick={cancelEditWorkspaceExplanation}
+                            >
+                              Cancel
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {getWorkspaceExplanation(workspace) ? (
+                            <p className="text-xs text-muted-foreground leading-relaxed">
+                              {getWorkspaceExplanation(workspace)}
+                            </p>
+                          ) : (
+                            <p className="text-xs text-muted-foreground">No explanation yet.</p>
+                          )}
+                          <div>
+                            <Button
+                              variant="ghost"
+                              size="xs"
+                              className="h-6 px-2"
+                              onClick={() => beginEditWorkspaceExplanation(workspace)}
+                            >
+                              Edit note
+                            </Button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ) : null}
                 </div>
@@ -432,7 +562,7 @@ export function ProjectProperties({ project, onUpdate }: ProjectPropertiesProps)
                 setWorkspaceError(null);
               }}
             >
-              Add workspace repo
+              Add repo workspace
             </Button>
           </div>
           {workspaceMode === "local" && (
@@ -479,6 +609,12 @@ export function ProjectProperties({ project, onUpdate }: ProjectPropertiesProps)
                 onChange={(e) => setWorkspaceRepoUrl(e.target.value)}
                 placeholder="https://github.com/org/repo"
               />
+              <textarea
+                className="w-full rounded border border-border bg-transparent px-2 py-1 text-xs outline-none resize-y min-h-[64px]"
+                value={workspaceRepoExplanation}
+                onChange={(e) => setWorkspaceRepoExplanation(e.target.value)}
+                placeholder="Explain what this repo handles (optional)."
+              />
               <div className="flex items-center gap-2">
                 <Button
                   variant="outline"
@@ -496,6 +632,7 @@ export function ProjectProperties({ project, onUpdate }: ProjectPropertiesProps)
                   onClick={() => {
                     setWorkspaceMode(null);
                     setWorkspaceRepoUrl("");
+                    setWorkspaceRepoExplanation("");
                     setWorkspaceError(null);
                   }}
                 >

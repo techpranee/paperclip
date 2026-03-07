@@ -17,11 +17,36 @@ The `claude_local` adapter runs Anthropic's Claude Code CLI locally. It supports
 | `cwd` | string | Yes | Working directory for the agent process (absolute path; created automatically if missing when permissions allow) |
 | `model` | string | No | Claude model to use (e.g. `claude-opus-4-6`) |
 | `promptTemplate` | string | No | Prompt used for all runs |
+| `anthropicBaseUrl` | string | No | Sets `ANTHROPIC_BASE_URL` for Claude API-mode calls |
+| `anthropicApiKey` | string | No | Sets `ANTHROPIC_API_KEY` for Claude API-mode calls |
+| `ollamaLinkUrl` | string | No | Convenience alias for `ANTHROPIC_BASE_URL` when using an Ollama bridge |
+| `ollamaLinkApiKey` | string | No | Convenience alias for `ANTHROPIC_API_KEY` when using an Ollama bridge |
 | `env` | object | No | Environment variables (supports secret refs) |
 | `timeoutSec` | number | No | Process timeout (0 = no timeout) |
 | `graceSec` | number | No | Grace period before force-kill |
 | `maxTurnsPerRun` | number | No | Max agentic turns per heartbeat |
 | `dangerouslySkipPermissions` | boolean | No | Skip permission prompts (dev only) |
+
+## Claude with Ollama Link
+
+If you run an Anthropic-compatible bridge in front of Ollama, set either:
+
+- `anthropicBaseUrl` + `anthropicApiKey`, or
+- `ollamaLinkUrl` + `ollamaLinkApiKey`
+
+Example:
+
+```json
+{
+	"adapterType": "claude_local",
+	"adapterConfig": {
+		"cwd": "/absolute/path/to/repo",
+		"model": "claude-sonnet-4-5-20250929",
+		"ollamaLinkUrl": "http://localhost:11434/anthropic",
+		"ollamaLinkApiKey": "ollama"
+	}
+}
+```
 
 ## Prompt Templates
 
@@ -54,4 +79,5 @@ Use the "Test Environment" button in the UI to validate the adapter config. It c
 - Claude CLI is installed and accessible
 - Working directory is absolute and available (auto-created if missing and permitted)
 - API key/auth mode hints (`ANTHROPIC_API_KEY` vs subscription login)
+- `ANTHROPIC_BASE_URL` detection for Anthropic-compatible gateways (including Ollama bridge setups)
 - A live hello probe (`claude --print - --output-format stream-json --verbose` with prompt `Respond with hello.`) to verify CLI readiness

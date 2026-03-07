@@ -7,7 +7,7 @@ Goals define the "why" and projects define the "what" for organizing work.
 
 ## Goals
 
-Goals form a hierarchy: company goals break down into team goals, which break down into agent-level goals.
+Goals form a hierarchy: company goals break down into team and project goals, which can break down into agent/task goals.
 
 ### List Goals
 
@@ -85,6 +85,7 @@ Notes:
 - `workspace` is optional. If present, the project is created and seeded with that workspace.
 - A workspace must include at least one of `cwd` or `repoUrl`.
 - For repo-only projects, omit `cwd` and provide `repoUrl`.
+- You can attach multiple workspaces/repositories per project via `POST /projects/{projectId}/workspaces`.
 
 ### Update Project
 
@@ -106,9 +107,17 @@ POST /api/projects/{projectId}/workspaces
   "cwd": "/path/to/workspace",
   "repoUrl": "https://github.com/org/repo",
   "repoRef": "main",
+  "metadata": {
+    "explanation": "Handles authentication API and identity provider integration"
+  },
   "isPrimary": true
 }
 ```
+
+Notes:
+
+- `metadata.explanation` is an optional free-text field to document what this repository/workspace is responsible for.
+- For project execution, the primary workspace (`isPrimary=true`) is preferred when a local `cwd` is available.
 
 Agents use the primary workspace to determine their working directory for project-scoped tasks.
 

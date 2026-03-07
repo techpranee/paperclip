@@ -168,7 +168,7 @@ Invariant: plaintext key shown once at creation; only hash stored.
 - `company_id` uuid fk not null
 - `title` text not null
 - `description` text null
-- `level` enum: `company | team | agent | task`
+- `level` enum: `company | team | project | agent | task`
 - `parent_id` uuid fk `goals.id` null
 - `owner_agent_id` uuid fk `agents.id` null
 - `status` enum: `planned | active | achieved | cancelled`

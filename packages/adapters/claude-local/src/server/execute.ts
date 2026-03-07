@@ -132,6 +132,10 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
   const envConfig = parseObject(config.env);
   const hasExplicitApiKey =
     typeof envConfig.PAPERCLIP_API_KEY === "string" && envConfig.PAPERCLIP_API_KEY.trim().length > 0;
+  const anthropicBaseUrl = asString(config.anthropicBaseUrl, "").trim();
+  const anthropicApiKey = asString(config.anthropicApiKey, "").trim();
+  const ollamaLinkUrl = asString(config.ollamaLinkUrl, "").trim();
+  const ollamaLinkApiKey = asString(config.ollamaLinkApiKey, "").trim();
   const env: Record<string, string> = { ...buildPaperclipEnv(agent) };
   env.PAPERCLIP_RUN_ID = runId;
 
@@ -198,6 +202,19 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
 
   for (const [key, value] of Object.entries(envConfig)) {
     if (typeof value === "string") env[key] = value;
+  }
+
+  if (anthropicBaseUrl) {
+    env.ANTHROPIC_BASE_URL = anthropicBaseUrl;
+  }
+  if (anthropicApiKey) {
+    env.ANTHROPIC_API_KEY = anthropicApiKey;
+  }
+  if (ollamaLinkUrl && !hasNonEmptyEnvValue(env, "ANTHROPIC_BASE_URL")) {
+    env.ANTHROPIC_BASE_URL = ollamaLinkUrl;
+  }
+  if (ollamaLinkApiKey && !hasNonEmptyEnvValue(env, "ANTHROPIC_API_KEY")) {
+    env.ANTHROPIC_API_KEY = ollamaLinkApiKey;
   }
 
   if (!hasExplicitApiKey && authToken) {
