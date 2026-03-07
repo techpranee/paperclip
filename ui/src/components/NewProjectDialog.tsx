@@ -44,6 +44,20 @@ const projectStatuses = [
 type WorkspaceSetup = "none" | "local" | "repo" | "both";
 const REPO_ONLY_CWD_SENTINEL = "/__paperclip_repo_only__";
 
+interface RepoDraft {
+  id: string;
+  url: string;
+  explanation: string;
+}
+
+function createRepoDraft(): RepoDraft {
+  return {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    url: "",
+    explanation: "",
+  };
+}
+
 export function NewProjectDialog() {
   const { newProjectOpen, closeNewProject } = useDialog();
   const { selectedCompanyId, selectedCompany } = useCompany();
@@ -56,7 +70,7 @@ export function NewProjectDialog() {
   const [expanded, setExpanded] = useState(false);
   const [workspaceSetup, setWorkspaceSetup] = useState<WorkspaceSetup>("none");
   const [workspaceLocalPath, setWorkspaceLocalPath] = useState("");
-  const [workspaceRepoUrl, setWorkspaceRepoUrl] = useState("");
+  const [workspaceRepos, setWorkspaceRepos] = useState<RepoDraft[]>([createRepoDraft()]);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
 
   const [statusOpen, setStatusOpen] = useState(false);
@@ -90,7 +104,7 @@ export function NewProjectDialog() {
     setExpanded(false);
     setWorkspaceSetup("none");
     setWorkspaceLocalPath("");
-    setWorkspaceRepoUrl("");
+    setWorkspaceRepos([createRepoDraft()]);
     setWorkspaceError(null);
   }
 
@@ -130,20 +144,47 @@ export function NewProjectDialog() {
     setWorkspaceError(null);
   };
 
+  const updateRepoDraft = (repoId: string, patch: Partial<RepoDraft>) => {
+    setWorkspaceRepos((prev) => prev.map((repo) => (repo.id === repoId ? { ...repo, ...patch } : repo)));
+  };
+
+  const addRepoDraft = () => {
+    setWorkspaceRepos((prev) => [...prev, createRepoDraft()]);
+  };
+
+  const removeRepoDraft = (repoId: string) => {
+    setWorkspaceRepos((prev) => {
+      const next = prev.filter((repo) => repo.id !== repoId);
+      return next.length > 0 ? next : [createRepoDraft()];
+    });
+  };
+
   async function handleSubmit() {
     if (!selectedCompanyId || !name.trim()) return;
     const localRequired = workspaceSetup === "local" || workspaceSetup === "both";
     const repoRequired = workspaceSetup === "repo" || workspaceSetup === "both";
     const localPath = workspaceLocalPath.trim();
-    const repoUrl = workspaceRepoUrl.trim();
+    const normalizedRepos = workspaceRepos
+      .map((repo) => ({
+        url: repo.url.trim(),
+        explanation: repo.explanation.trim(),
+      }))
+      .filter((repo) => repo.url.length > 0);
 
     if (localRequired && !isAbsolutePath(localPath)) {
       setWorkspaceError("Local folder must be a full absolute path.");
       return;
     }
-    if (repoRequired && !isGitHubRepoUrl(repoUrl)) {
-      setWorkspaceError("Repo workspace must use a valid GitHub repo URL.");
-      return;
+    if (repoRequired) {
+      if (normalizedRepos.length === 0) {
+        setWorkspaceError("Add at least one GitHub repo URL.");
+        return;
+      }
+      const invalidRepo = normalizedRepos.find((repo) => !isGitHubRepoUrl(repo.url));
+      if (invalidRepo) {
+        setWorkspaceError("Repo workspace must use valid GitHub repo URLs.");
+        return;
+      }
     }
 
     setWorkspaceError(null);
@@ -160,22 +201,42 @@ export function NewProjectDialog() {
 
       const workspacePayloads: Array<Record<string, unknown>> = [];
       if (localRequired && repoRequired) {
-        workspacePayloads.push({
-          name: deriveWorkspaceNameFromPath(localPath),
-          cwd: localPath,
-          repoUrl,
-        });
+        if (normalizedRepos.length === 1) {
+          const repo = normalizedRepos[0];
+          workspacePayloads.push({
+            name: deriveWorkspaceNameFromPath(localPath),
+            cwd: localPath,
+            repoUrl: repo.url,
+            ...(repo.explanation.length > 0 ? { metadata: { explanation: repo.explanation } } : {}),
+          });
+        } else {
+          workspacePayloads.push({
+            name: deriveWorkspaceNameFromPath(localPath),
+            cwd: localPath,
+          });
+          for (const repo of normalizedRepos) {
+            workspacePayloads.push({
+              name: deriveWorkspaceNameFromRepo(repo.url),
+              cwd: REPO_ONLY_CWD_SENTINEL,
+              repoUrl: repo.url,
+              ...(repo.explanation.length > 0 ? { metadata: { explanation: repo.explanation } } : {}),
+            });
+          }
+        }
       } else if (localRequired) {
         workspacePayloads.push({
           name: deriveWorkspaceNameFromPath(localPath),
           cwd: localPath,
         });
       } else if (repoRequired) {
-        workspacePayloads.push({
-          name: deriveWorkspaceNameFromRepo(repoUrl),
-          cwd: REPO_ONLY_CWD_SENTINEL,
-          repoUrl,
-        });
+        for (const repo of normalizedRepos) {
+          workspacePayloads.push({
+            name: deriveWorkspaceNameFromRepo(repo.url),
+            cwd: REPO_ONLY_CWD_SENTINEL,
+            repoUrl: repo.url,
+            ...(repo.explanation.length > 0 ? { metadata: { explanation: repo.explanation } } : {}),
+          });
+        }
       }
       for (const workspacePayload of workspacePayloads) {
         await projectsApi.createWorkspace(created.id, {
@@ -284,7 +345,7 @@ export function NewProjectDialog() {
         <div className="px-4 pb-3 space-y-3 border-t border-border">
           <div className="pt-3">
             <p className="text-sm font-medium">Where will work be done on this project?</p>
-            <p className="text-xs text-muted-foreground">Add local folder and/or GitHub repo workspace hints.</p>
+            <p className="text-xs text-muted-foreground">Add local folder and/or GitHub repo workspace hints (one or many repos).</p>
           </div>
           <div className="grid gap-2 sm:grid-cols-3">
             <button
@@ -311,9 +372,9 @@ export function NewProjectDialog() {
             >
               <div className="flex items-center gap-2 text-sm font-medium">
                 <Github className="h-4 w-4" />
-                A github repo
+                GitHub repos
               </div>
-              <p className="mt-1 text-xs text-muted-foreground">Paste a GitHub URL.</p>
+              <p className="mt-1 text-xs text-muted-foreground">Paste one or more GitHub URLs.</p>
             </button>
             <button
               type="button"
@@ -347,13 +408,46 @@ export function NewProjectDialog() {
           )}
           {(workspaceSetup === "repo" || workspaceSetup === "both") && (
             <div className="rounded-md border border-border p-2">
-              <label className="mb-1 block text-xs text-muted-foreground">GitHub repo URL</label>
-              <input
-                className="w-full rounded border border-border bg-transparent px-2 py-1 text-xs outline-none"
-                value={workspaceRepoUrl}
-                onChange={(e) => setWorkspaceRepoUrl(e.target.value)}
-                placeholder="https://github.com/org/repo"
-              />
+              <label className="mb-1 block text-xs text-muted-foreground">GitHub repos</label>
+              <div className="space-y-2">
+                {workspaceRepos.map((repo, index) => (
+                  <div key={repo.id} className="rounded border border-border p-2 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs text-muted-foreground">Repo {index + 1}</span>
+                      {workspaceRepos.length > 1 ? (
+                        <button
+                          type="button"
+                          className="text-xs text-muted-foreground hover:text-foreground"
+                          onClick={() => removeRepoDraft(repo.id)}
+                        >
+                          Remove
+                        </button>
+                      ) : null}
+                    </div>
+                    <input
+                      className="w-full rounded border border-border bg-transparent px-2 py-1 text-xs outline-none"
+                      value={repo.url}
+                      onChange={(e) => updateRepoDraft(repo.id, { url: e.target.value })}
+                      placeholder="https://github.com/org/repo"
+                    />
+                    <textarea
+                      className="w-full rounded border border-border bg-transparent px-2 py-1 text-xs outline-none resize-y min-h-[64px]"
+                      value={repo.explanation}
+                      onChange={(e) => updateRepoDraft(repo.id, { explanation: e.target.value })}
+                      placeholder="What this repo owns (optional)."
+                    />
+                  </div>
+                ))}
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                className="mt-2"
+                onClick={addRepoDraft}
+              >
+                Add another repo
+              </Button>
             </div>
           )}
           {workspaceError && (

@@ -74,21 +74,26 @@ export function printOpenCodeStreamEvent(raw: string, _debug: boolean): void {
   if (type === "tool_use") {
     const part = asRecord(parsed.part);
     const tool = asString(part?.tool, "tool");
+    const callId = asString(part?.callID) || asString(part?.id);
     const state = asRecord(part?.state);
     const status = asString(state?.status);
-    const summary = `tool_${status || "event"}: ${tool}`;
-    const isError = status === "error";
-    console.log((isError ? pc.red : pc.yellow)(summary));
-    const input = state?.input;
-    if (input !== undefined) {
-      try {
-        console.log(pc.gray(JSON.stringify(input, null, 2)));
-      } catch {
-        console.log(pc.gray(String(input)));
+    console.log(pc.yellow(`tool_call: ${tool}${callId ? ` (${callId})` : ""}`));
+    if (status === "completed" || status === "error") {
+      const metadata = asRecord(state?.metadata);
+      const exitCode = metadata?.exit;
+      const exitSuffix = typeof exitCode === "number" || typeof exitCode === "string"
+        ? ` exit=${String(exitCode)}`
+        : "";
+      const isError = status === "error";
+      console.log((isError ? pc.red : pc.yellow)(`tool_result status=${status}${exitSuffix}`));
+      const output = (asString(state?.output) || asString(state?.error)).trim();
+      if (output) {
+        for (const line of output.split(/\r?\n/)) {
+          if (line.trim().length === 0) continue;
+          console.log((isError ? pc.red : pc.gray)(line));
+        }
       }
     }
-    const output = asString(state?.output) || asString(state?.error);
-    if (output) console.log((isError ? pc.red : pc.gray)(output));
     return;
   }
 
@@ -101,7 +106,8 @@ export function printOpenCodeStreamEvent(raw: string, _debug: boolean): void {
     const cached = asNumber(cache?.read, 0);
     const cost = asNumber(part?.cost, 0);
     const reason = asString(part?.reason, "step");
-    console.log(pc.blue(`step finished (${reason}) tokens: in=${input} out=${output} cached=${cached} cost=$${cost.toFixed(6)}`));
+    console.log(pc.blue(`step finished: reason=${reason}`));
+    console.log(pc.blue(`tokens: in=${input} out=${output} cached=${cached} cost=$${cost.toFixed(6)}`));
     return;
   }
 

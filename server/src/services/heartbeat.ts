@@ -506,7 +506,7 @@ export function heartbeatService(db: Db) {
               eq(projectWorkspaces.projectId, workspaceProjectId),
             ),
           )
-          .orderBy(asc(projectWorkspaces.createdAt), asc(projectWorkspaces.id))
+          .orderBy(desc(projectWorkspaces.isPrimary), asc(projectWorkspaces.createdAt), asc(projectWorkspaces.id))
       : [];
 
     const workspaceHints = projectWorkspaceRows.map((workspace) => ({

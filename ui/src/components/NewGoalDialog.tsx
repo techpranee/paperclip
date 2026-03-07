@@ -29,6 +29,7 @@ import { StatusBadge } from "./StatusBadge";
 const levelLabels: Record<string, string> = {
   company: "Company",
   team: "Team",
+  project: "Project",
   agent: "Agent",
   task: "Task",
 };

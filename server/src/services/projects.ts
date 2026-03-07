@@ -70,6 +70,23 @@ async function attachGoals(db: Db, rows: ProjectRow[]): Promise<ProjectWithGoals
 }
 
 function toWorkspace(row: ProjectWorkspaceRow): ProjectWorkspace {
+  const metadata = (() => {
+    const raw = row.metadata as unknown;
+    if (raw === null || raw === undefined) return null;
+    if (typeof raw === "object") return raw as Record<string, unknown>;
+    if (typeof raw === "string") {
+      try {
+        const parsed = JSON.parse(raw);
+        return typeof parsed === "object" && parsed !== null
+          ? (parsed as Record<string, unknown>)
+          : null;
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  })();
+
   return {
     id: row.id,
     companyId: row.companyId,
@@ -78,7 +95,7 @@ function toWorkspace(row: ProjectWorkspaceRow): ProjectWorkspace {
     cwd: row.cwd,
     repoUrl: row.repoUrl ?? null,
     repoRef: row.repoRef ?? null,
-    metadata: (row.metadata as Record<string, unknown> | null) ?? null,
+    metadata,
     isPrimary: row.isPrimary,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,

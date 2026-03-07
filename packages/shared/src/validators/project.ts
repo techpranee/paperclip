@@ -1,12 +1,16 @@
 import { z } from "zod";
 import { PROJECT_STATUSES } from "../constants.js";
 
+const workspaceMetadataSchema = z.object({
+  explanation: z.string().optional(),
+}).catchall(z.unknown());
+
 const projectWorkspaceFields = {
   name: z.string().min(1).optional(),
   cwd: z.string().min(1).optional().nullable(),
   repoUrl: z.string().url().optional().nullable(),
   repoRef: z.string().optional().nullable(),
-  metadata: z.record(z.unknown()).optional().nullable(),
+  metadata: workspaceMetadataSchema.optional().nullable(),
 };
 
 export const createProjectWorkspaceSchema = z.object({

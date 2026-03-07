@@ -75,6 +75,7 @@ export type {
   AssetImage,
   Project,
   ProjectGoalRef,
+  ProjectWorkspaceMetadata,
   ProjectWorkspace,
   Issue,
   IssueAssigneeAdapterOverrides,

@@ -20,6 +20,10 @@ Core fields:
 - promptTemplate (string, optional): run prompt template
 - maxTurnsPerRun (number, optional): max turns for one run
 - dangerouslySkipPermissions (boolean, optional): pass --dangerously-skip-permissions to claude
+- anthropicBaseUrl (string, optional): set ANTHROPIC_BASE_URL for Claude CLI API mode
+- anthropicApiKey (string, optional): set ANTHROPIC_API_KEY for Claude CLI API mode
+- ollamaLinkUrl (string, optional): convenience alias for ANTHROPIC_BASE_URL when using an Ollama/Anthropic bridge
+- ollamaLinkApiKey (string, optional): convenience alias for ANTHROPIC_API_KEY when using an Ollama/Anthropic bridge
 - command (string, optional): defaults to "claude"
 - extraArgs (string[], optional): additional CLI args
 - env (object, optional): KEY=VALUE environment variables
