@@ -18,6 +18,12 @@ import {
 } from "@paperclipai/adapter-cursor-local/server";
 import { agentConfigurationDoc as cursorAgentConfigurationDoc, models as cursorModels } from "@paperclipai/adapter-cursor-local";
 import {
+  execute as geminiExecute,
+  testEnvironment as geminiTestEnvironment,
+  sessionCodec as geminiSessionCodec,
+} from "@paperclipai/adapter-gemini-local/server";
+import { agentConfigurationDoc as geminiAgentConfigurationDoc, models as geminiModels } from "@paperclipai/adapter-gemini-local";
+import {
   execute as openCodeExecute,
   testEnvironment as openCodeTestEnvironment,
   sessionCodec as openCodeSessionCodec,
@@ -27,32 +33,26 @@ import {
   agentConfigurationDoc as openCodeAgentConfigurationDoc,
 } from "@paperclipai/adapter-opencode-local";
 import {
-  execute as openclawExecute,
-  testEnvironment as openclawTestEnvironment,
-  onHireApproved as openclawOnHireApproved,
-} from "@paperclipai/adapter-openclaw/server";
+  execute as openclawGatewayExecute,
+  testEnvironment as openclawGatewayTestEnvironment,
+} from "@paperclipai/adapter-openclaw-gateway/server";
 import {
-  agentConfigurationDoc as openclawAgentConfigurationDoc,
-  models as openclawModels,
-} from "@paperclipai/adapter-openclaw";
+  agentConfigurationDoc as openclawGatewayAgentConfigurationDoc,
+  models as openclawGatewayModels,
+} from "@paperclipai/adapter-openclaw-gateway";
+import {
+  execute as piExecute,
+  testEnvironment as piTestEnvironment,
+  sessionCodec as piSessionCodec,
+  listPiModels,
+} from "@paperclipai/adapter-pi-local/server";
+import {
+  agentConfigurationDoc as piAgentConfigurationDoc,
+} from "@paperclipai/adapter-pi-local";
 import { listCodexModels } from "./codex-models.js";
 import { listCursorModels } from "./cursor-models.js";
 import { processAdapter } from "./process/index.js";
 import { httpAdapter } from "./http/index.js";
-
-const PI_ADAPTER_MODULE_SPEC: string = ["@paperclipai", "adapter-pi-local"].join("/");
-const PI_ADAPTER_SERVER_MODULE_SPEC: string = `${PI_ADAPTER_MODULE_SPEC}/server`;
-
-type PiServerModuleShape = {
-  execute: ServerAdapterModule["execute"];
-  testEnvironment: ServerAdapterModule["testEnvironment"];
-  sessionCodec?: ServerAdapterModule["sessionCodec"];
-  listPiModels: NonNullable<ServerAdapterModule["listModels"]>;
-};
-
-type PiSharedModuleShape = {
-  agentConfigurationDoc?: string;
-};
 
 const claudeLocalAdapter: ServerAdapterModule = {
   type: "claude_local",
@@ -86,14 +86,23 @@ const cursorLocalAdapter: ServerAdapterModule = {
   agentConfigurationDoc: cursorAgentConfigurationDoc,
 };
 
-const openclawAdapter: ServerAdapterModule = {
-  type: "openclaw",
-  execute: openclawExecute,
-  testEnvironment: openclawTestEnvironment,
-  onHireApproved: openclawOnHireApproved,
-  models: openclawModels,
+const geminiLocalAdapter: ServerAdapterModule = {
+  type: "gemini_local",
+  execute: geminiExecute,
+  testEnvironment: geminiTestEnvironment,
+  sessionCodec: geminiSessionCodec,
+  models: geminiModels,
+  supportsLocalAgentJwt: true,
+  agentConfigurationDoc: geminiAgentConfigurationDoc,
+};
+
+const openclawGatewayAdapter: ServerAdapterModule = {
+  type: "openclaw_gateway",
+  execute: openclawGatewayExecute,
+  testEnvironment: openclawGatewayTestEnvironment,
+  models: openclawGatewayModels,
   supportsLocalAgentJwt: false,
-  agentConfigurationDoc: openclawAgentConfigurationDoc,
+  agentConfigurationDoc: openclawGatewayAgentConfigurationDoc,
 };
 
 const openCodeLocalAdapter: ServerAdapterModule = {
@@ -107,14 +116,30 @@ const openCodeLocalAdapter: ServerAdapterModule = {
   agentConfigurationDoc: openCodeAgentConfigurationDoc,
 };
 
-const adapters: ServerAdapterModule[] = [claudeLocalAdapter, codexLocalAdapter, openCodeLocalAdapter];
-const piLocalAdapter = await loadPiLocalAdapter();
-if (piLocalAdapter) {
-  adapters.push(piLocalAdapter);
-}
-adapters.push(cursorLocalAdapter, openclawAdapter, processAdapter, httpAdapter);
+const piLocalAdapter: ServerAdapterModule = {
+  type: "pi_local",
+  execute: piExecute,
+  testEnvironment: piTestEnvironment,
+  sessionCodec: piSessionCodec,
+  models: [],
+  listModels: listPiModels,
+  supportsLocalAgentJwt: true,
+  agentConfigurationDoc: piAgentConfigurationDoc,
+};
 
-const adaptersByType = new Map<string, ServerAdapterModule>(adapters.map((a) => [a.type, a]));
+const adaptersByType = new Map<string, ServerAdapterModule>(
+  [
+    claudeLocalAdapter,
+    codexLocalAdapter,
+    openCodeLocalAdapter,
+    piLocalAdapter,
+    cursorLocalAdapter,
+    geminiLocalAdapter,
+    openclawGatewayAdapter,
+    processAdapter,
+    httpAdapter,
+  ].map((a) => [a.type, a]),
+);
 
 export function getServerAdapter(type: string): ServerAdapterModule {
   const adapter = adaptersByType.get(type);
@@ -141,39 +166,4 @@ export function listServerAdapters(): ServerAdapterModule[] {
 
 export function findServerAdapter(type: string): ServerAdapterModule | null {
   return adaptersByType.get(type) ?? null;
-}
-
-async function loadPiLocalAdapter(): Promise<ServerAdapterModule | null> {
-  try {
-    const [piServerModule, piSharedModule] = await Promise.all([
-      import(PI_ADAPTER_SERVER_MODULE_SPEC) as Promise<PiServerModuleShape>,
-      import(PI_ADAPTER_MODULE_SPEC) as Promise<PiSharedModuleShape>,
-    ]);
-    return {
-      type: "pi_local",
-      execute: piServerModule.execute,
-      testEnvironment: piServerModule.testEnvironment,
-      sessionCodec: piServerModule.sessionCodec,
-      models: [],
-      listModels: piServerModule.listPiModels,
-      supportsLocalAgentJwt: true,
-      agentConfigurationDoc: piSharedModule.agentConfigurationDoc,
-    };
-  } catch (error) {
-    if (isModuleMissingError(error, PI_ADAPTER_MODULE_SPEC)) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (process.env.NODE_ENV !== "test") {
-        console.warn(`[paperclip] pi_local adapter unavailable: ${message}`);
-      }
-      return null;
-    }
-    throw error;
-  }
-}
-
-function isModuleMissingError(error: unknown, moduleName: string): error is Error & { code?: string } {
-  if (!error || typeof error !== "object") return false;
-  const maybeError = error as { code?: string; message?: unknown };
-  if (maybeError.code !== "ERR_MODULE_NOT_FOUND") return false;
-  return typeof maybeError.message === "string" && maybeError.message.includes(moduleName);
 }

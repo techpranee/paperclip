@@ -12,6 +12,22 @@ export type {
 export type { AssetImage } from "./asset.js";
 export type { Project, ProjectGoalRef, ProjectWorkspaceMetadata, ProjectWorkspace } from "./project.js";
 export type {
+  WorkspaceRuntimeService,
+  ExecutionWorkspaceStrategyType,
+  ExecutionWorkspaceMode,
+  ExecutionWorkspaceStrategy,
+  ProjectExecutionWorkspacePolicy,
+  IssueExecutionWorkspaceSettings,
+} from "./workspace-runtime.js";
+export type {
+  WorkspaceRuntimeService,
+  ExecutionWorkspaceStrategyType,
+  ExecutionWorkspaceMode,
+  ExecutionWorkspaceStrategy,
+  ProjectExecutionWorkspacePolicy,
+  IssueExecutionWorkspaceSettings,
+} from "./workspace-runtime.js";
+export type {
   Issue,
   IssueAssigneeAdapterOverrides,
   IssueComment,
@@ -40,6 +56,7 @@ export type {
   AgentRuntimeState,
   AgentTaskSession,
   AgentWakeupRequest,
+  InstanceSchedulerHeartbeatAgent,
 } from "./heartbeat.js";
 export type { LiveEvent } from "./live.js";
 export type { DashboardSummary } from "./dashboard.js";

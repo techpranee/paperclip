@@ -50,26 +50,27 @@ function parseToolUse(parsed: Record<string, unknown>, ts: string): TranscriptEn
     kind: "tool_call",
     ts,
     name: toolName,
+    toolUseId: asString(part.callID) || asString(part.id) || undefined,
     input,
   };
 
   const status = asString(state?.status);
   if (status !== "completed" && status !== "error") return [callEntry];
 
-  const metadata = asRecord(state?.metadata);
-  const exitCode = metadata?.exit;
-  const outputText = (
+  const rawOutput =
     asString(state?.output) ||
     asString(state?.error) ||
-    asString(part.title)
-  ).trimEnd();
-  const lines: string[] = [`status: ${status}`];
-  if (typeof exitCode === "number" || typeof exitCode === "string") {
-    lines.push(`exit: ${String(exitCode)}`);
+    asString(part.title) ||
+    `${toolName} ${status}`;
+
+  const metadata = asRecord(state?.metadata);
+  const headerParts: string[] = [`status: ${status}`];
+  if (metadata) {
+    for (const [key, value] of Object.entries(metadata)) {
+      if (value !== undefined && value !== null) headerParts.push(`${key}: ${value}`);
+    }
   }
-  if (outputText) {
-    lines.push("", outputText);
-  }
+  const content = `${headerParts.join("\n")}\n\n${rawOutput}`.trim();
 
   return [
     callEntry,
@@ -77,7 +78,7 @@ function parseToolUse(parsed: Record<string, unknown>, ts: string): TranscriptEn
       kind: "tool_result",
       ts,
       toolUseId: asString(part.callID) || asString(part.id, toolName),
-      content: lines.join("\n"),
+      content,
       isError: status === "error",
     },
   ];

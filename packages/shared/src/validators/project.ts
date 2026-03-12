@@ -1,16 +1,36 @@
 import { z } from "zod";
 import { PROJECT_STATUSES } from "../constants.js";
 
-const workspaceMetadataSchema = z.object({
-  explanation: z.string().optional(),
-}).catchall(z.unknown());
+const executionWorkspaceStrategySchema = z
+  .object({
+    type: z.enum(["project_primary", "git_worktree"]).optional(),
+    baseRef: z.string().optional().nullable(),
+    branchTemplate: z.string().optional().nullable(),
+    worktreeParentDir: z.string().optional().nullable(),
+    provisionCommand: z.string().optional().nullable(),
+    teardownCommand: z.string().optional().nullable(),
+  })
+  .strict();
+
+export const projectExecutionWorkspacePolicySchema = z
+  .object({
+    enabled: z.boolean(),
+    defaultMode: z.enum(["project_primary", "isolated"]).optional(),
+    allowIssueOverride: z.boolean().optional(),
+    workspaceStrategy: executionWorkspaceStrategySchema.optional().nullable(),
+    workspaceRuntime: z.record(z.unknown()).optional().nullable(),
+    branchPolicy: z.record(z.unknown()).optional().nullable(),
+    pullRequestPolicy: z.record(z.unknown()).optional().nullable(),
+    cleanupPolicy: z.record(z.unknown()).optional().nullable(),
+  })
+  .strict();
 
 const projectWorkspaceFields = {
   name: z.string().min(1).optional(),
   cwd: z.string().min(1).optional().nullable(),
   repoUrl: z.string().url().optional().nullable(),
   repoRef: z.string().optional().nullable(),
-  metadata: workspaceMetadataSchema.optional().nullable(),
+  metadata: z.record(z.unknown()).optional().nullable(),
 };
 
 export const createProjectWorkspaceSchema = z.object({
@@ -47,6 +67,7 @@ const projectFields = {
   leadAgentId: z.string().uuid().optional().nullable(),
   targetDate: z.string().optional().nullable(),
   color: z.string().optional().nullable(),
+  executionWorkspacePolicy: projectExecutionWorkspacePolicySchema.optional().nullable(),
   archivedAt: z.string().datetime().optional().nullable(),
 };
 
@@ -60,3 +81,5 @@ export type CreateProject = z.infer<typeof createProjectSchema>;
 export const updateProjectSchema = z.object(projectFields).partial();
 
 export type UpdateProject = z.infer<typeof updateProjectSchema>;
+
+export type ProjectExecutionWorkspacePolicy = z.infer<typeof projectExecutionWorkspacePolicySchema>;
