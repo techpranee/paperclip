@@ -9,14 +9,30 @@ import { openClawGatewayUIAdapter } from "./openclaw-gateway";
 import { processUIAdapter } from "./process";
 import { httpUIAdapter } from "./http";
 
-const adapters: UIAdapterModule[] = [claudeLocalUIAdapter, codexLocalUIAdapter, geminiLocalUIAdapter, openCodeLocalUIAdapter];
-const piLocalUIAdapter = await loadPiLocalUIAdapter();
-if (piLocalUIAdapter) {
-  adapters.push(piLocalUIAdapter);
-}
-adapters.push(cursorLocalUIAdapter, openClawGatewayUIAdapter, processUIAdapter, httpUIAdapter);
+const adapters: UIAdapterModule[] = [
+  claudeLocalUIAdapter,
+  codexLocalUIAdapter,
+  geminiLocalUIAdapter,
+  openCodeLocalUIAdapter,
+  cursorLocalUIAdapter,
+  openClawGatewayUIAdapter,
+  processUIAdapter,
+  httpUIAdapter,
+];
 
 const adaptersByType = new Map<string, UIAdapterModule>(adapters.map((a) => [a.type, a]));
+
+void loadPiLocalUIAdapter()
+  .then((piLocalUIAdapter) => {
+    if (piLocalUIAdapter) {
+      adaptersByType.set(piLocalUIAdapter.type, piLocalUIAdapter);
+    }
+  })
+  .catch((error) => {
+    console.error(
+      `[paperclip/ui] failed to load optional pi_local adapter: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
 
 export function getUIAdapter(type: string): UIAdapterModule {
   return adaptersByType.get(type) ?? processUIAdapter;
