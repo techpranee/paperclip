@@ -20,6 +20,14 @@ export type {
   IssueExecutionWorkspaceSettings,
 } from "./workspace-runtime.js";
 export type {
+  WorkspaceRuntimeService,
+  ExecutionWorkspaceStrategyType,
+  ExecutionWorkspaceMode,
+  ExecutionWorkspaceStrategy,
+  ProjectExecutionWorkspacePolicy,
+  IssueExecutionWorkspaceSettings,
+} from "./workspace-runtime.js";
+export type {
   Issue,
   IssueAssigneeAdapterOverrides,
   IssueComment,
