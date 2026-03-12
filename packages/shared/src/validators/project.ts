@@ -25,12 +25,73 @@ export const projectExecutionWorkspacePolicySchema = z
   })
   .strict();
 
+const workspaceGitAuthSchema = z
+  .object({
+    mode: z.enum(["none", "inherit_company_default", "github_pat_secret_ref"]),
+    patSecretId: z.string().uuid().optional().nullable(),
+    username: z.string().min(1).optional().nullable(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.mode === "github_pat_secret_ref" && (!value.patSecretId || value.patSecretId.trim().length === 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "gitAuth.patSecretId is required when gitAuth.mode is github_pat_secret_ref.",
+        path: ["patSecretId"],
+      });
+    }
+  });
+
+const workspaceInfisicalSchema = z
+  .object({
+    enabled: z.boolean(),
+    projectId: z.string().min(1).optional().nullable(),
+    environment: z.string().min(1).optional().nullable(),
+    secretPath: z.string().min(1).optional().nullable(),
+    mappings: z.record(z.string()).optional().nullable(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (!value.enabled) return;
+    if (!value.projectId || value.projectId.trim().length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "infisical.projectId is required when infisical.enabled is true.",
+        path: ["projectId"],
+      });
+    }
+    if (!value.environment || value.environment.trim().length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "infisical.environment is required when infisical.enabled is true.",
+        path: ["environment"],
+      });
+    }
+  });
+
+export const projectWorkspaceMetadataSchema = z
+  .object({
+    explanation: z.string().optional(),
+    gitAuth: workspaceGitAuthSchema.optional().nullable(),
+    infisical: workspaceInfisicalSchema.optional().nullable(),
+    pullRequest: z
+      .object({
+        mode: z.enum(["none", "agent_may_open", "agent_auto_open", "approval_required"]).optional(),
+        baseBranch: z.string().min(1).optional().nullable(),
+        autoPushOnDone: z.boolean().optional(),
+      })
+      .strict()
+      .optional()
+      .nullable(),
+  })
+  .passthrough();
+
 const projectWorkspaceFields = {
   name: z.string().min(1).optional(),
   cwd: z.string().min(1).optional().nullable(),
   repoUrl: z.string().url().optional().nullable(),
   repoRef: z.string().optional().nullable(),
-  metadata: z.record(z.unknown()).optional().nullable(),
+  metadata: projectWorkspaceMetadataSchema.optional().nullable(),
 };
 
 export const createProjectWorkspaceSchema = z.object({
@@ -83,3 +144,4 @@ export const updateProjectSchema = z.object(projectFields).partial();
 export type UpdateProject = z.infer<typeof updateProjectSchema>;
 
 export type ProjectExecutionWorkspacePolicy = z.infer<typeof projectExecutionWorkspacePolicySchema>;
+export type ProjectWorkspaceMetadata = z.infer<typeof projectWorkspaceMetadataSchema>;

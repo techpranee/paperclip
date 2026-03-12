@@ -10,15 +10,16 @@ export type {
   AdapterEnvironmentTestResult,
 } from "./agent.js";
 export type { AssetImage } from "./asset.js";
-export type { Project, ProjectGoalRef, ProjectWorkspaceMetadata, ProjectWorkspace } from "./project.js";
 export type {
-  WorkspaceRuntimeService,
-  ExecutionWorkspaceStrategyType,
-  ExecutionWorkspaceMode,
-  ExecutionWorkspaceStrategy,
-  ProjectExecutionWorkspacePolicy,
-  IssueExecutionWorkspaceSettings,
-} from "./workspace-runtime.js";
+  Project,
+  ProjectGoalRef,
+  ProjectWorkspaceMetadata,
+  ProjectWorkspace,
+  ProjectWorkspaceGitAuthMode,
+  ProjectWorkspaceGitAuthConfig,
+  ProjectWorkspaceInfisicalConfig,
+  ProjectWorkspacePullRequestConfig,
+} from "./project.js";
 export type {
   WorkspaceRuntimeService,
   ExecutionWorkspaceStrategyType,

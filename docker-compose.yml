@@ -1,38 +1,33 @@
 services:
-  db:
-    image: postgres:17-alpine
-    environment:
-      POSTGRES_USER: paperclip
-      POSTGRES_PASSWORD: paperclip
-      POSTGRES_DB: paperclip
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U paperclip -d paperclip"]
-      interval: 2s
-      timeout: 5s
-      retries: 30
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-
   server:
     build: .
+    # image: paperclipai/paperclip:latest  # uncomment to use a pre-built registry image
+    restart: unless-stopped
     ports:
       - "3100:3100"
     environment:
-      DATABASE_URL: postgres://paperclip:paperclip@db:5432/paperclip
+      # ── Database ────────────────────────────────────────────────────────────
+      # Point at your AWS RDS PostgreSQL instance.
+      # Format: postgres://<user>:<password>@<rds-endpoint>:5432/<dbname>
+      DATABASE_URL: "${DATABASE_URL:?DATABASE_URL must be set}"
+
+      # ── Server ──────────────────────────────────────────────────────────────
       PORT: "3100"
       SERVE_UI: "true"
+
+      # ── Auth & Deployment ────────────────────────────────────────────────────
       PAPERCLIP_DEPLOYMENT_MODE: "authenticated"
       PAPERCLIP_DEPLOYMENT_EXPOSURE: "private"
-      PAPERCLIP_PUBLIC_URL: "${PAPERCLIP_PUBLIC_URL:-http://localhost:3100}"
+      PAPERCLIP_PUBLIC_URL: "${PAPERCLIP_PUBLIC_URL:?PAPERCLIP_PUBLIC_URL must be set}"
       BETTER_AUTH_SECRET: "${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET must be set}"
+
+      # ── Secrets encryption key (auto-created if omitted) ────────────────────
+      # PAPERCLIP_SECRETS_MASTER_KEY: "${PAPERCLIP_SECRETS_MASTER_KEY}"
+
     volumes:
+      # Persists secrets master key, config and any local state.
+      # Map to a named volume or a bind-mount on your host.
       - paperclip-data:/paperclip
-    depends_on:
-      db:
-        condition: service_healthy
 
 volumes:
-  pgdata:
   paperclip-data:

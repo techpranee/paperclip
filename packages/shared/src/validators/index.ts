@@ -50,11 +50,13 @@ export {
   createProjectWorkspaceSchema,
   updateProjectWorkspaceSchema,
   projectExecutionWorkspacePolicySchema,
+  projectWorkspaceMetadataSchema,
   type CreateProject,
   type UpdateProject,
   type CreateProjectWorkspace,
   type UpdateProjectWorkspace,
   type ProjectExecutionWorkspacePolicy,
+  type ProjectWorkspaceMetadata,
 } from "./project.js";
 
 export {

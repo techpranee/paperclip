@@ -6,8 +6,36 @@ export interface ProjectGoalRef {
   title: string;
 }
 
+export type ProjectWorkspaceGitAuthMode =
+  | "none"
+  | "inherit_company_default"
+  | "github_pat_secret_ref";
+
+export interface ProjectWorkspaceGitAuthConfig {
+  mode: ProjectWorkspaceGitAuthMode;
+  patSecretId?: string | null;
+  username?: string | null;
+}
+
+export interface ProjectWorkspaceInfisicalConfig {
+  enabled: boolean;
+  projectId?: string | null;
+  environment?: string | null;
+  secretPath?: string | null;
+  mappings?: Record<string, string> | null;
+}
+
+export interface ProjectWorkspacePullRequestConfig {
+  mode?: "none" | "agent_may_open" | "agent_auto_open" | "approval_required";
+  baseBranch?: string | null;
+  autoPushOnDone?: boolean;
+}
+
 export interface ProjectWorkspaceMetadata {
   explanation?: string;
+  gitAuth?: ProjectWorkspaceGitAuthConfig | null;
+  infisical?: ProjectWorkspaceInfisicalConfig | null;
+  pullRequest?: ProjectWorkspacePullRequestConfig | null;
   [key: string]: unknown;
 }
 
