@@ -30,11 +30,6 @@ function firstNonEmptyLine(text: string): string {
   );
 }
 
-function commandLooksLike(command: string, expected: string): boolean {
-  const normalized = command.split(/[\\/]/).pop()?.toLowerCase() ?? command.toLowerCase();
-  return normalized === expected || normalized === `${expected}.cmd` || normalized === `${expected}.exe`;
-}
-
 function summarizeProbeDetail(stdout: string, stderr: string, parsedError: string | null): string | null {
   const raw = parsedError?.trim() || firstNonEmptyLine(stderr) || firstNonEmptyLine(stdout);
   if (!raw) return null;
@@ -54,7 +49,6 @@ function normalizeEnv(input: unknown): Record<string, string> {
 
 const OPENCODE_AUTH_REQUIRED_RE =
   /(?:auth(?:entication)?\s+required|api\s*key|invalid\s*api\s*key|not\s+logged\s+in|opencode\s+auth\s+login|free\s+usage\s+exceeded)/i;
-const OPENCODE_MODEL_UNAVAILABLE_RE = /providermodelnotfounderror|model\s+(?:not\s+found|unavailable)/i;
 
 export async function testEnvironment(
   ctx: AdapterEnvironmentTestContext,
@@ -65,7 +59,7 @@ export async function testEnvironment(
   const cwd = asString(config.cwd, process.cwd());
 
   try {
-    await ensureAbsoluteDirectory(cwd, { createIfMissing: true });
+    await ensureAbsoluteDirectory(cwd, { createIfMissing: false });
     checks.push({
       code: "opencode_cwd_valid",
       level: "info",
@@ -86,28 +80,13 @@ export async function testEnvironment(
     if (typeof value === "string") env[key] = value;
   }
 
-  const configOpenAiKeyRaw = envConfig.OPENAI_API_KEY;
-  const configOpenAiKey = typeof configOpenAiKeyRaw === "string" ? configOpenAiKeyRaw : null;
-  const hostOpenAiKey = process.env.OPENAI_API_KEY ?? null;
-  if (configOpenAiKey !== null && configOpenAiKey.trim().length === 0) {
+  const openaiKeyOverride = "OPENAI_API_KEY" in envConfig ? asString(envConfig.OPENAI_API_KEY, "") : null;
+  if (openaiKeyOverride !== null && openaiKeyOverride.trim() === "") {
     checks.push({
       code: "opencode_openai_api_key_missing",
       level: "warn",
-      message: "OPENAI_API_KEY is configured as an empty value.",
-      hint: "Set a non-empty OPENAI_API_KEY value (the current override is empty).",
-    });
-  } else if ((configOpenAiKey && configOpenAiKey.trim().length > 0) || (hostOpenAiKey && hostOpenAiKey.trim().length > 0)) {
-    checks.push({
-      code: "opencode_openai_api_key_present",
-      level: "info",
-      message: "OPENAI_API_KEY is present.",
-    });
-  } else {
-    checks.push({
-      code: "opencode_openai_api_key_missing",
-      level: "warn",
-      message: "OPENAI_API_KEY is not configured.",
-      hint: "Set OPENAI_API_KEY for OpenCode provider authentication.",
+      message: "OPENAI_API_KEY override is empty.",
+      hint: "The OPENAI_API_KEY override is empty. Set a valid key or remove the override.",
     });
   }
 
@@ -142,9 +121,10 @@ export async function testEnvironment(
   const canRunProbe =
     checks.every((check) => check.code !== "opencode_cwd_invalid" && check.code !== "opencode_command_unresolvable");
 
-  const looksLikeOpenCode = commandLooksLike(command, "opencode");
   let modelValidationPassed = false;
-  if (canRunProbe && looksLikeOpenCode) {
+  const configuredModel = asString(config.model, "").trim();
+
+  if (canRunProbe && configuredModel) {
     try {
       const discovered = await discoverOpenCodeModels({ command, cwd, env: runtimeEnv });
       if (discovered.length > 0) {
@@ -156,31 +136,65 @@ export async function testEnvironment(
       } else {
         checks.push({
           code: "opencode_models_empty",
-          level: "warn",
+          level: "error",
           message: "OpenCode returned no models.",
           hint: "Run `opencode models` and verify provider authentication.",
         });
       }
     } catch (err) {
-      checks.push({
-        code: "opencode_models_discovery_failed",
-        level: "warn",
-        message: err instanceof Error ? err.message : "OpenCode model discovery failed.",
-        hint: "Run `opencode models` manually to verify provider auth and config.",
-      });
+      const errMsg = err instanceof Error ? err.message : String(err);
+      if (/ProviderModelNotFoundError/i.test(errMsg)) {
+        checks.push({
+          code: "opencode_hello_probe_model_unavailable",
+          level: "warn",
+          message: "The configured model was not found by the provider.",
+          detail: errMsg,
+          hint: "Run `opencode models` and choose an available provider/model ID.",
+        });
+      } else {
+        checks.push({
+          code: "opencode_models_discovery_failed",
+          level: "error",
+          message: errMsg || "OpenCode model discovery failed.",
+          hint: "Run `opencode models` manually to verify provider auth and config.",
+        });
+      }
+    }
+  } else if (canRunProbe && !configuredModel) {
+    try {
+      const discovered = await discoverOpenCodeModels({ command, cwd, env: runtimeEnv });
+      if (discovered.length > 0) {
+        checks.push({
+          code: "opencode_models_discovered",
+          level: "info",
+          message: `Discovered ${discovered.length} model(s) from OpenCode providers.`,
+        });
+      }
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      if (/ProviderModelNotFoundError/i.test(errMsg)) {
+        checks.push({
+          code: "opencode_hello_probe_model_unavailable",
+          level: "warn",
+          message: "The configured model was not found by the provider.",
+          detail: errMsg,
+          hint: "Run `opencode models` and choose an available provider/model ID.",
+        });
+      } else {
+        checks.push({
+          code: "opencode_models_discovery_failed",
+          level: "warn",
+          message: errMsg || "OpenCode model discovery failed (best-effort, no model configured).",
+          hint: "Run `opencode models` manually to verify provider auth and config.",
+        });
+      }
     }
   }
 
-  const configuredModel = asString(config.model, "").trim();
-  if (!configuredModel) {
-    checks.push({
-      code: "opencode_model_required",
-      level: "warn",
-      message: "OpenCode model is not configured; using provider defaults for diagnostics.",
-      hint: "Set adapterConfig.model using an ID from `opencode models`.",
-    });
-    modelValidationPassed = true;
-  } else if (canRunProbe && looksLikeOpenCode) {
+  const modelUnavailable = checks.some((check) => check.code === "opencode_hello_probe_model_unavailable");
+  if (!configuredModel && !modelUnavailable) {
+    // No model configured – skip model requirement if no model-related checks exist
+  } else if (configuredModel && canRunProbe) {
     try {
       await ensureOpenCodeModelConfiguredAndAvailable({
         model: configuredModel,
@@ -197,7 +211,7 @@ export async function testEnvironment(
     } catch (err) {
       checks.push({
         code: "opencode_model_invalid",
-        level: "warn",
+        level: "error",
         message: err instanceof Error ? err.message : "Configured model is unavailable.",
         hint: "Run `opencode models` and choose a currently available provider/model ID.",
       });
@@ -205,21 +219,6 @@ export async function testEnvironment(
   }
 
   if (canRunProbe && modelValidationPassed) {
-    if (!looksLikeOpenCode) {
-      checks.push({
-        code: "opencode_hello_probe_skipped_custom_command",
-        level: "info",
-        message: "Skipped OpenCode hello probe because command is not `opencode`.",
-        detail: command,
-      });
-      return {
-        adapterType: ctx.adapterType,
-        status: summarizeStatus(checks),
-        checks,
-        testedAt: new Date().toISOString(),
-      };
-    }
-
     const extraArgs = (() => {
       const fromExtraArgs = asStringArray(config.extraArgs);
       if (fromExtraArgs.length > 0) return fromExtraArgs;
@@ -229,9 +228,7 @@ export async function testEnvironment(
     const probeModel = configuredModel;
 
     const args = ["run", "--format", "json"];
-    if (probeModel) {
-      args.push("--model", probeModel);
-    }
+    args.push("--model", probeModel);
     if (variant) args.push("--variant", variant);
     if (extraArgs.length > 0) args.push(...extraArgs);
 
@@ -277,6 +274,14 @@ export async function testEnvironment(
                 hint: "Run `opencode run --format json` manually and prompt `Respond with hello` to inspect output.",
               }),
         });
+      } else if (/ProviderModelNotFoundError/i.test(authEvidence)) {
+        checks.push({
+          code: "opencode_hello_probe_model_unavailable",
+          level: "warn",
+          message: "The configured model was not found by the provider.",
+          ...(detail ? { detail } : {}),
+          hint: "Run `opencode models` and choose an available provider/model ID.",
+        });
       } else if (OPENCODE_AUTH_REQUIRED_RE.test(authEvidence)) {
         checks.push({
           code: "opencode_hello_probe_auth_required",
@@ -284,14 +289,6 @@ export async function testEnvironment(
           message: "OpenCode is installed, but provider authentication is not ready.",
           ...(detail ? { detail } : {}),
           hint: "Run `opencode auth login` or set provider credentials, then retry the probe.",
-        });
-      } else if (OPENCODE_MODEL_UNAVAILABLE_RE.test(authEvidence)) {
-        checks.push({
-          code: "opencode_hello_probe_model_unavailable",
-          level: "warn",
-          message: "OpenCode reported a provider/model availability issue.",
-          ...(detail ? { detail } : {}),
-          hint: "Choose an available model from `opencode models` or verify provider access.",
         });
       } else {
         checks.push({
