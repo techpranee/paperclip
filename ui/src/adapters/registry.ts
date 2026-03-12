@@ -3,14 +3,19 @@ import { claudeLocalUIAdapter } from "./claude-local";
 import { codexLocalUIAdapter } from "./codex-local";
 import { cursorLocalUIAdapter } from "./cursor";
 import { openCodeLocalUIAdapter } from "./opencode-local";
-import { piLocalUIAdapter } from "./pi-local";
+import { loadPiLocalUIAdapter } from "./pi-local";
 import { openClawUIAdapter } from "./openclaw";
 import { processUIAdapter } from "./process";
 import { httpUIAdapter } from "./http";
 
-const adaptersByType = new Map<string, UIAdapterModule>(
-  [claudeLocalUIAdapter, codexLocalUIAdapter, openCodeLocalUIAdapter, piLocalUIAdapter, cursorLocalUIAdapter, openClawUIAdapter, processUIAdapter, httpUIAdapter].map((a) => [a.type, a]),
-);
+const adapters: UIAdapterModule[] = [claudeLocalUIAdapter, codexLocalUIAdapter, openCodeLocalUIAdapter];
+const piLocalUIAdapter = await loadPiLocalUIAdapter();
+if (piLocalUIAdapter) {
+  adapters.push(piLocalUIAdapter);
+}
+adapters.push(cursorLocalUIAdapter, openClawUIAdapter, processUIAdapter, httpUIAdapter);
+
+const adaptersByType = new Map<string, UIAdapterModule>(adapters.map((a) => [a.type, a]));
 
 export function getUIAdapter(type: string): UIAdapterModule {
   return adaptersByType.get(type) ?? processUIAdapter;
