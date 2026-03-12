@@ -74,26 +74,26 @@ export function printOpenCodeStreamEvent(raw: string, _debug: boolean): void {
   if (type === "tool_use") {
     const part = asRecord(parsed.part);
     const tool = asString(part?.tool, "tool");
-    const callId = asString(part?.callID) || asString(part?.id);
+    const callID = asString(part?.callID);
     const state = asRecord(part?.state);
     const status = asString(state?.status);
-    console.log(pc.yellow(`tool_call: ${tool}${callId ? ` (${callId})` : ""}`));
-    if (status === "completed" || status === "error") {
-      const metadata = asRecord(state?.metadata);
-      const exitCode = metadata?.exit;
-      const exitSuffix = typeof exitCode === "number" || typeof exitCode === "string"
-        ? ` exit=${String(exitCode)}`
-        : "";
-      const isError = status === "error";
-      console.log((isError ? pc.red : pc.yellow)(`tool_result status=${status}${exitSuffix}`));
-      const output = (asString(state?.output) || asString(state?.error)).trim();
-      if (output) {
-        for (const line of output.split(/\r?\n/)) {
-          if (line.trim().length === 0) continue;
-          console.log((isError ? pc.red : pc.gray)(line));
+    const isError = status === "error";
+    const metadata = asRecord(state?.metadata);
+
+    console.log(pc.yellow(`tool_call: ${tool}${callID ? ` (${callID})` : ""}`));
+
+    if (status) {
+      const metaParts = [`status=${status}`];
+      if (metadata) {
+        for (const [key, value] of Object.entries(metadata)) {
+          if (value !== undefined && value !== null) metaParts.push(`${key}=${value}`);
         }
       }
+      console.log((isError ? pc.red : pc.gray)(`tool_result ${metaParts.join(" ")}`));
     }
+
+    const output = (asString(state?.output) || asString(state?.error)).trim();
+    if (output) console.log((isError ? pc.red : pc.gray)(output));
     return;
   }
 
