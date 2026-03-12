@@ -5,6 +5,7 @@ import { useCompany } from "../context/CompanyContext";
 import { projectsApi } from "../api/projects";
 import { goalsApi } from "../api/goals";
 import { assetsApi } from "../api/assets";
+import { secretsApi } from "../api/secrets";
 import { queryKeys } from "../lib/queryKeys";
 import {
   Dialog,
@@ -48,6 +49,13 @@ interface RepoDraft {
   id: string;
   url: string;
   explanation: string;
+  patSecretId: string;
+  patUsername: string;
+  infisicalEnabled: boolean;
+  infisicalProjectId: string;
+  infisicalEnvironment: string;
+  infisicalSecretPath: string;
+  infisicalMappings: string;
 }
 
 function createRepoDraft(): RepoDraft {
@@ -55,12 +63,35 @@ function createRepoDraft(): RepoDraft {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     url: "",
     explanation: "",
+    patSecretId: "",
+    patUsername: "x-access-token",
+    infisicalEnabled: false,
+    infisicalProjectId: "",
+    infisicalEnvironment: "",
+    infisicalSecretPath: "",
+    infisicalMappings: "",
   };
 }
 
 export function NewProjectDialog() {
   const { newProjectOpen, closeNewProject } = useDialog();
   const { selectedCompanyId, selectedCompany } = useCompany();
+  const parseInfisicalMappings = (text: string): Record<string, string> | null => {
+    const trimmed = text.trim();
+    if (!trimmed) return null;
+    const mappings: Record<string, string> = {};
+    for (const line of trimmed.split(/\r?\n/)) {
+      const raw = line.trim();
+      if (!raw || raw.startsWith("#")) continue;
+      const eq = raw.indexOf("=");
+      if (eq <= 0) continue;
+      const envKey = raw.slice(0, eq).trim();
+      const sourceKey = raw.slice(eq + 1).trim();
+      if (!envKey || !sourceKey) continue;
+      mappings[envKey] = sourceKey;
+    }
+    return Object.keys(mappings).length > 0 ? mappings : null;
+  };
   const queryClient = useQueryClient();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -72,6 +103,7 @@ export function NewProjectDialog() {
   const [workspaceLocalPath, setWorkspaceLocalPath] = useState("");
   const [workspaceRepos, setWorkspaceRepos] = useState<RepoDraft[]>([createRepoDraft()]);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const [baseRepoId, setBaseRepoId] = useState<string | null>(null);
 
   const [statusOpen, setStatusOpen] = useState(false);
   const [goalOpen, setGoalOpen] = useState(false);
@@ -82,6 +114,14 @@ export function NewProjectDialog() {
     queryFn: () => goalsApi.list(selectedCompanyId!),
     enabled: !!selectedCompanyId && newProjectOpen,
   });
+
+  const { data: companySecrets } = useQuery({
+    queryKey: selectedCompanyId ? queryKeys.secrets.list(selectedCompanyId) : ["secrets", "none"],
+    queryFn: () => secretsApi.list(selectedCompanyId!),
+    enabled: Boolean(selectedCompanyId) && newProjectOpen,
+  });
+
+  const secretNameById = new Map((companySecrets ?? []).map((secret) => [secret.id, secret.name]));
 
   const createProject = useMutation({
     mutationFn: (data: Record<string, unknown>) =>
@@ -106,6 +146,7 @@ export function NewProjectDialog() {
     setWorkspaceLocalPath("");
     setWorkspaceRepos([createRepoDraft()]);
     setWorkspaceError(null);
+    setBaseRepoId(null);
   }
 
   const isAbsolutePath = (value: string) => value.startsWith("/") || /^[A-Za-z]:[\\/]/.test(value);
@@ -153,6 +194,9 @@ export function NewProjectDialog() {
   };
 
   const removeRepoDraft = (repoId: string) => {
+    if (baseRepoId === repoId) {
+      setBaseRepoId(null);
+    }
     setWorkspaceRepos((prev) => {
       const next = prev.filter((repo) => repo.id !== repoId);
       return next.length > 0 ? next : [createRepoDraft()];
@@ -166,8 +210,16 @@ export function NewProjectDialog() {
     const localPath = workspaceLocalPath.trim();
     const normalizedRepos = workspaceRepos
       .map((repo) => ({
+        id: repo.id,
         url: repo.url.trim(),
         explanation: repo.explanation.trim(),
+        patSecretId: repo.patSecretId.trim(),
+        patUsername: repo.patUsername.trim(),
+        infisicalEnabled: repo.infisicalEnabled,
+        infisicalProjectId: repo.infisicalProjectId.trim(),
+        infisicalEnvironment: repo.infisicalEnvironment.trim(),
+        infisicalSecretPath: repo.infisicalSecretPath.trim(),
+        infisicalMappings: repo.infisicalMappings,
       }))
       .filter((repo) => repo.url.length > 0);
 
@@ -185,6 +237,20 @@ export function NewProjectDialog() {
         setWorkspaceError("Repo workspace must use valid GitHub repo URLs.");
         return;
       }
+      const invalidPat = normalizedRepos.find(
+        (repo) => repo.patSecretId.length > 0 && !secretNameById.has(repo.patSecretId),
+      );
+      if (invalidPat) {
+        setWorkspaceError("Select valid PAT secrets for each repo.");
+        return;
+      }
+      const invalidInfisical = normalizedRepos.find(
+        (repo) => repo.infisicalEnabled && (!repo.infisicalProjectId || !repo.infisicalEnvironment),
+      );
+      if (invalidInfisical) {
+        setWorkspaceError("Each repo with Infisical enabled must include project id and environment.");
+        return;
+      }
     }
 
     setWorkspaceError(null);
@@ -199,27 +265,69 @@ export function NewProjectDialog() {
         ...(targetDate ? { targetDate } : {}),
       });
 
+      const buildRepoMetadata = (repo: {
+        explanation: string;
+        patSecretId: string;
+        patUsername: string;
+        infisicalEnabled: boolean;
+        infisicalProjectId: string;
+        infisicalEnvironment: string;
+        infisicalSecretPath: string;
+        infisicalMappings: string;
+      }, isBaseRepo: boolean) => {
+        const metadata: Record<string, unknown> = {};
+        if (repo.explanation.length > 0) {
+          metadata.explanation = repo.explanation;
+        }
+        if (isBaseRepo) {
+          metadata.baseRepo = true;
+        }
+        if (repo.patSecretId.length > 0) {
+          metadata.gitAuth = {
+            mode: "github_pat_secret_ref",
+            patSecretId: repo.patSecretId,
+            ...(repo.patUsername.length > 0 ? { username: repo.patUsername } : {}),
+          };
+        }
+        if (repo.infisicalEnabled) {
+          const infisicalMappingsParsed = parseInfisicalMappings(repo.infisicalMappings);
+          metadata.infisical = {
+            enabled: true,
+            projectId: repo.infisicalProjectId,
+            environment: repo.infisicalEnvironment,
+            ...(repo.infisicalSecretPath.length > 0 ? { secretPath: repo.infisicalSecretPath } : {}),
+            ...(infisicalMappingsParsed ? { mappings: infisicalMappingsParsed } : {}),
+          };
+        }
+        return Object.keys(metadata).length > 0 ? metadata : undefined;
+      };
+
       const workspacePayloads: Array<Record<string, unknown>> = [];
       if (localRequired && repoRequired) {
         if (normalizedRepos.length === 1) {
           const repo = normalizedRepos[0];
+          const isBaseRepo = baseRepoId === null || baseRepoId === repo.id;
+          const metadata = buildRepoMetadata(repo, isBaseRepo);
           workspacePayloads.push({
             name: deriveWorkspaceNameFromPath(localPath),
             cwd: localPath,
             repoUrl: repo.url,
-            ...(repo.explanation.length > 0 ? { metadata: { explanation: repo.explanation } } : {}),
+            ...(metadata ? { metadata } : {}),
           });
         } else {
           workspacePayloads.push({
             name: deriveWorkspaceNameFromPath(localPath),
             cwd: localPath,
           });
-          for (const repo of normalizedRepos) {
+          for (let index = 0; index < normalizedRepos.length; index += 1) {
+            const repo = normalizedRepos[index];
+            const isBaseRepo = baseRepoId !== null ? baseRepoId === repo.id : index === 0;
+            const metadata = buildRepoMetadata(repo, isBaseRepo);
             workspacePayloads.push({
               name: deriveWorkspaceNameFromRepo(repo.url),
               cwd: REPO_ONLY_CWD_SENTINEL,
               repoUrl: repo.url,
-              ...(repo.explanation.length > 0 ? { metadata: { explanation: repo.explanation } } : {}),
+              ...(metadata ? { metadata } : {}),
             });
           }
         }
@@ -229,12 +337,15 @@ export function NewProjectDialog() {
           cwd: localPath,
         });
       } else if (repoRequired) {
-        for (const repo of normalizedRepos) {
+        for (let index = 0; index < normalizedRepos.length; index += 1) {
+          const repo = normalizedRepos[index];
+          const isBaseRepo = baseRepoId !== null ? baseRepoId === repo.id : index === 0;
+          const metadata = buildRepoMetadata(repo, isBaseRepo);
           workspacePayloads.push({
             name: deriveWorkspaceNameFromRepo(repo.url),
             cwd: REPO_ONLY_CWD_SENTINEL,
             repoUrl: repo.url,
-            ...(repo.explanation.length > 0 ? { metadata: { explanation: repo.explanation } } : {}),
+            ...(metadata ? { metadata } : {}),
           });
         }
       }
@@ -414,15 +525,27 @@ export function NewProjectDialog() {
                   <div key={repo.id} className="rounded border border-border p-2 space-y-2">
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-xs text-muted-foreground">Repo {index + 1}</span>
-                      {workspaceRepos.length > 1 ? (
-                        <button
-                          type="button"
-                          className="text-xs text-muted-foreground hover:text-foreground"
-                          onClick={() => removeRepoDraft(repo.id)}
-                        >
-                          Remove
-                        </button>
-                      ) : null}
+                      <div className="flex items-center gap-2">
+                        <label className="inline-flex items-center gap-1 text-xs text-muted-foreground cursor-pointer">
+                          <input
+                            type="radio"
+                            name="project-base-repo"
+                            checked={baseRepoId === repo.id || (baseRepoId === null && index === 0)}
+                            onChange={() => setBaseRepoId(repo.id)}
+                            className="h-3 w-3"
+                          />
+                          Base repo
+                        </label>
+                        {workspaceRepos.length > 1 ? (
+                          <button
+                            type="button"
+                            className="text-xs text-muted-foreground hover:text-foreground"
+                            onClick={() => removeRepoDraft(repo.id)}
+                          >
+                            Remove
+                          </button>
+                        ) : null}
+                      </div>
                     </div>
                     <input
                       className="w-full rounded border border-border bg-transparent px-2 py-1 text-xs outline-none"
@@ -436,6 +559,62 @@ export function NewProjectDialog() {
                       onChange={(e) => updateRepoDraft(repo.id, { explanation: e.target.value })}
                       placeholder="What this repo owns (optional)."
                     />
+                    <select
+                      className="w-full rounded border border-border bg-transparent px-2 py-1 text-xs outline-none"
+                      value={repo.patSecretId}
+                      onChange={(e) => updateRepoDraft(repo.id, { patSecretId: e.target.value })}
+                    >
+                      <option value="">No PAT secret (public repo / pre-auth host)</option>
+                      {(companySecrets ?? []).map((secret) => (
+                        <option key={secret.id} value={secret.id}>
+                          {secret.name}
+                        </option>
+                      ))}
+                    </select>
+                    {repo.patSecretId.trim().length > 0 ? (
+                      <input
+                        className="w-full rounded border border-border bg-transparent px-2 py-1 text-xs outline-none"
+                        value={repo.patUsername}
+                        onChange={(e) => updateRepoDraft(repo.id, { patUsername: e.target.value })}
+                        placeholder="Git username for PAT auth (default: x-access-token)"
+                      />
+                    ) : null}
+                    <label className="inline-flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={repo.infisicalEnabled}
+                        onChange={(e) => updateRepoDraft(repo.id, { infisicalEnabled: e.target.checked })}
+                      />
+                      Enable Infisical for this repo
+                    </label>
+                    {repo.infisicalEnabled ? (
+                      <>
+                        <input
+                          className="w-full rounded border border-border bg-transparent px-2 py-1 text-xs outline-none"
+                          value={repo.infisicalProjectId}
+                          onChange={(e) => updateRepoDraft(repo.id, { infisicalProjectId: e.target.value })}
+                          placeholder="Infisical project id"
+                        />
+                        <input
+                          className="w-full rounded border border-border bg-transparent px-2 py-1 text-xs outline-none"
+                          value={repo.infisicalEnvironment}
+                          onChange={(e) => updateRepoDraft(repo.id, { infisicalEnvironment: e.target.value })}
+                          placeholder="Infisical environment (e.g. prod)"
+                        />
+                        <input
+                          className="w-full rounded border border-border bg-transparent px-2 py-1 text-xs outline-none"
+                          value={repo.infisicalSecretPath}
+                          onChange={(e) => updateRepoDraft(repo.id, { infisicalSecretPath: e.target.value })}
+                          placeholder="Infisical secret path (optional, default: /)"
+                        />
+                        <textarea
+                          className="w-full rounded border border-border bg-transparent px-2 py-1 text-xs outline-none resize-y min-h-[56px]"
+                          value={repo.infisicalMappings}
+                          onChange={(e) => updateRepoDraft(repo.id, { infisicalMappings: e.target.value })}
+                          placeholder={"Env mappings (optional)\nDATABASE_URL=db_url\nREDIS_URL=redis_url"}
+                        />
+                      </>
+                    ) : null}
                   </div>
                 ))}
               </div>

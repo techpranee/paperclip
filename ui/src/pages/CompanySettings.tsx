@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { companiesApi } from "../api/companies";
 import { accessApi } from "../api/access";
+import { secretsApi } from "../api/secrets";
 import { queryKeys } from "../lib/queryKeys";
 import { Button } from "@/components/ui/button";
 import { Settings, Check } from "lucide-react";
@@ -47,6 +48,9 @@ export function CompanySettings() {
   const [inviteSnippet, setInviteSnippet] = useState<string | null>(null);
   const [snippetCopied, setSnippetCopied] = useState(false);
   const [snippetCopyDelightId, setSnippetCopyDelightId] = useState(0);
+  const [secretName, setSecretName] = useState("");
+  const [secretValue, setSecretValue] = useState("");
+  const [secretDescription, setSecretDescription] = useState("");
 
   const generalDirty =
     !!selectedCompany &&
@@ -73,6 +77,32 @@ export function CompanySettings() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
     }
+  });
+
+  const { data: companySecrets = [] } = useQuery({
+    queryKey: selectedCompanyId ? queryKeys.secrets.list(selectedCompanyId) : ["secrets", "none"],
+    queryFn: () => secretsApi.list(selectedCompanyId!),
+    enabled: Boolean(selectedCompanyId),
+  });
+
+  const createSecretMutation = useMutation({
+    mutationFn: (data: { name: string; value: string; description?: string | null }) =>
+      secretsApi.create(selectedCompanyId!, data),
+    onSuccess: () => {
+      if (!selectedCompanyId) return;
+      setSecretName("");
+      setSecretValue("");
+      setSecretDescription("");
+      queryClient.invalidateQueries({ queryKey: queryKeys.secrets.list(selectedCompanyId) });
+    },
+  });
+
+  const deleteSecretMutation = useMutation({
+    mutationFn: (secretId: string) => secretsApi.remove(secretId),
+    onSuccess: () => {
+      if (!selectedCompanyId) return;
+      queryClient.invalidateQueries({ queryKey: queryKeys.secrets.list(selectedCompanyId) });
+    },
   });
 
   const inviteMutation = useMutation({
@@ -175,6 +205,17 @@ export function CompanySettings() {
       name: companyName.trim(),
       description: description.trim() || null,
       brandColor: brandColor || null
+    });
+  }
+
+  function handleCreateSecret() {
+    const name = secretName.trim();
+    const value = secretValue.trim();
+    if (!name || !value || !selectedCompanyId) return;
+    createSecretMutation.mutate({
+      name,
+      value,
+      description: secretDescription.trim() || null,
     });
   }
 
@@ -304,6 +345,92 @@ export function CompanySettings() {
             checked={!!selectedCompany.requireBoardApprovalForNewAgents}
             onChange={(v) => settingsMutation.mutate(v)}
           />
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+          Secrets
+        </div>
+        <div className="space-y-3 rounded-md border border-border px-4 py-4">
+          <Field label="Secret name" hint="Used as the display label in dropdowns.">
+            <input
+              className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
+              type="text"
+              value={secretName}
+              placeholder="OLLAMA_CLOUD_KEY"
+              onChange={(e) => setSecretName(e.target.value)}
+            />
+          </Field>
+          <Field label="Secret value" hint="Stored securely and never shown again in plaintext.">
+            <input
+              className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
+              type="password"
+              value={secretValue}
+              placeholder="Enter secret value"
+              onChange={(e) => setSecretValue(e.target.value)}
+            />
+          </Field>
+          <Field label="Description" hint="Optional context for this secret.">
+            <input
+              className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
+              type="text"
+              value={secretDescription}
+              placeholder="Optional"
+              onChange={(e) => setSecretDescription(e.target.value)}
+            />
+          </Field>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              onClick={handleCreateSecret}
+              disabled={
+                createSecretMutation.isPending ||
+                !secretName.trim() ||
+                !secretValue.trim()
+              }
+            >
+              {createSecretMutation.isPending ? "Saving..." : "Add secret"}
+            </Button>
+            {createSecretMutation.isError && (
+              <span className="text-xs text-destructive">
+                {createSecretMutation.error instanceof Error
+                  ? createSecretMutation.error.message
+                  : "Failed to create secret"}
+              </span>
+            )}
+          </div>
+
+          <div className="space-y-1.5 pt-1">
+            {companySecrets.length === 0 ? (
+              <p className="text-xs text-muted-foreground">No secrets created yet.</p>
+            ) : (
+              companySecrets.map((secret) => (
+                <div
+                  key={secret.id}
+                  className="flex items-center justify-between rounded border border-border px-2.5 py-2"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm">{secret.name}</p>
+                    {secret.description ? (
+                      <p className="truncate text-xs text-muted-foreground">
+                        {secret.description}
+                      </p>
+                    ) : null}
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-xs text-destructive hover:text-destructive"
+                    onClick={() => deleteSecretMutation.mutate(secret.id)}
+                    disabled={deleteSecretMutation.isPending}
+                  >
+                    Delete
+                  </Button>
+                </div>
+              ))
+            )}
+          </div>
         </div>
       </div>
 

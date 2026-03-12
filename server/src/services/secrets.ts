@@ -364,5 +364,11 @@ export function secretService(db: Db) {
       resolved.env = env;
       return { config: resolved, secretKeys };
     },
+
+    resolveSecretRef: async (
+      companyId: string,
+      secretId: string,
+      version: number | "latest" = "latest",
+    ) => resolveSecretValue(companyId, secretId, version),
   };
 }

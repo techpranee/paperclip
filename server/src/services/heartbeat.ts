@@ -39,6 +39,9 @@ import {
   parseProjectExecutionWorkspacePolicy,
   resolveExecutionWorkspaceMode,
 } from "./execution-workspace-policy.js";
+import { materializeProjectWorkspaceRepo } from "./git-workspace.js";
+import { resolveWorkspaceInfisicalEnv } from "./infisical.js";
+import { runPullRequestAutomation } from "./pr-automation.js";
 import { redactCurrentUserText, redactCurrentUserValue } from "../log-redaction.js";
 
 const MAX_LIVE_LOG_CHUNK_BYTES = 8 * 1024;
@@ -129,6 +132,7 @@ export type ResolvedWorkspaceForRun = {
   workspaceId: string | null;
   repoUrl: string | null;
   repoRef: string | null;
+  workspaceMetadata: Record<string, unknown> | null;
   workspaceHints: Array<{
     workspaceId: string;
     cwd: string | null;
@@ -140,6 +144,11 @@ export type ResolvedWorkspaceForRun = {
 
 function readNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
 }
 
 export function resolveRuntimeSessionParamsForWorkspace(input: {
@@ -568,9 +577,43 @@ export function heartbeatService(db: Db) {
     if (projectWorkspaceRows.length > 0) {
       const missingProjectCwds: string[] = [];
       let hasConfiguredProjectCwd = false;
+      let hasRepoWorkspace = false;
+      const repoMaterializationErrors: string[] = [];
       for (const workspace of projectWorkspaceRows) {
         const projectCwd = readNonEmptyString(workspace.cwd);
+        const workspaceRepoUrl = readNonEmptyString(workspace.repoUrl);
         if (!projectCwd || projectCwd === REPO_ONLY_CWD_SENTINEL) {
+          if (workspaceRepoUrl) {
+            hasRepoWorkspace = true;
+            try {
+              const materialized = await materializeProjectWorkspaceRepo({
+                companyId: agent.companyId,
+                agentId: agent.id,
+                workspaceId: workspace.id,
+                repoUrl: workspaceRepoUrl,
+                repoRef: readNonEmptyString(workspace.repoRef),
+                metadata: asRecord(workspace.metadata),
+                resolveSecretRef: ({ companyId, secretId, version }) =>
+                  secretsSvc.resolveSecretRef(companyId, secretId, version ?? "latest"),
+              });
+              return {
+                cwd: materialized.cwd,
+                source: "project_primary" as const,
+                projectId: resolvedProjectId,
+                workspaceId: workspace.id,
+                repoUrl: workspace.repoUrl,
+                repoRef: workspace.repoRef,
+                workspaceMetadata: asRecord(workspace.metadata),
+                workspaceHints,
+                warnings: materialized.warnings,
+              };
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              repoMaterializationErrors.push(
+                `Failed to materialize repo workspace "${workspaceRepoUrl}": ${message}`,
+              );
+            }
+          }
           continue;
         }
         hasConfiguredProjectCwd = true;
@@ -586,6 +629,7 @@ export function heartbeatService(db: Db) {
             workspaceId: workspace.id,
             repoUrl: workspace.repoUrl,
             repoRef: workspace.repoRef,
+            workspaceMetadata: asRecord(workspace.metadata),
             workspaceHints,
             warnings: [],
           };
@@ -605,9 +649,24 @@ export function heartbeatService(db: Db) {
             : `Project workspace path "${firstMissing}" is not available yet. Using fallback workspace "${fallbackCwd}" for this run.`,
         );
       } else if (!hasConfiguredProjectCwd) {
-        warnings.push(
-          `Project workspace has no local cwd configured. Using fallback workspace "${fallbackCwd}" for this run.`,
-        );
+        if (repoMaterializationErrors.length > 0) {
+          warnings.push(repoMaterializationErrors[0]!);
+          const extraErrorCount = Math.max(0, repoMaterializationErrors.length - 1);
+          if (extraErrorCount > 0) {
+            warnings.push(`Additional repo workspace materialization failures: ${extraErrorCount}.`);
+          }
+          warnings.push(
+            `Unable to materialize a repo workspace. Using fallback workspace "${fallbackCwd}" for this run.`,
+          );
+        } else if (hasRepoWorkspace) {
+          warnings.push(
+            `Repo workspace is configured but not yet materialized. Using fallback workspace "${fallbackCwd}" for this run.`,
+          );
+        } else {
+          warnings.push(
+            `Project workspace has no local cwd configured. Using fallback workspace "${fallbackCwd}" for this run.`,
+          );
+        }
       }
       return {
         cwd: fallbackCwd,
@@ -616,6 +675,7 @@ export function heartbeatService(db: Db) {
         workspaceId: projectWorkspaceRows[0]?.id ?? null,
         repoUrl: projectWorkspaceRows[0]?.repoUrl ?? null,
         repoRef: projectWorkspaceRows[0]?.repoRef ?? null,
+        workspaceMetadata: asRecord(projectWorkspaceRows[0]?.metadata),
         workspaceHints,
         warnings,
       };
@@ -635,6 +695,7 @@ export function heartbeatService(db: Db) {
           workspaceId: readNonEmptyString(previousSessionParams?.workspaceId),
           repoUrl: readNonEmptyString(previousSessionParams?.repoUrl),
           repoRef: readNonEmptyString(previousSessionParams?.repoRef),
+          workspaceMetadata: null,
           workspaceHints,
           warnings: [],
         };
@@ -664,6 +725,7 @@ export function heartbeatService(db: Db) {
       workspaceId: null,
       repoUrl: null,
       repoRef: null,
+      workspaceMetadata: null,
       workspaceHints,
       warnings,
     };
@@ -1171,10 +1233,25 @@ export function heartbeatService(db: Db) {
     const mergedConfig = issueAssigneeOverrides?.adapterConfig
       ? { ...workspaceManagedConfig, ...issueAssigneeOverrides.adapterConfig }
       : workspaceManagedConfig;
-    const { config: resolvedConfig, secretKeys } = await secretsSvc.resolveAdapterConfigForRuntime(
+    const { config: resolvedConfigFromSecrets, secretKeys: adapterSecretKeys } = await secretsSvc.resolveAdapterConfigForRuntime(
       agent.companyId,
       mergedConfig,
     );
+    const resolvedConfig = { ...resolvedConfigFromSecrets };
+    const secretKeys = new Set<string>(adapterSecretKeys);
+    const infisical = await resolveWorkspaceInfisicalEnv({
+      metadata: resolvedWorkspace.workspaceMetadata,
+    });
+    if (Object.keys(infisical.env).length > 0) {
+      const existingEnv = parseObject(resolvedConfig.env);
+      resolvedConfig.env = {
+        ...existingEnv,
+        ...infisical.env,
+      };
+      for (const key of infisical.secretKeys) {
+        secretKeys.add(key);
+      }
+    }
     const issueRef = issueId
       ? await db
           .select({
@@ -1214,6 +1291,7 @@ export function heartbeatService(db: Db) {
     const runtimeSessionParams = runtimeSessionResolution.sessionParams;
     const runtimeWorkspaceWarnings = [
       ...resolvedWorkspace.warnings,
+      ...infisical.warnings,
       ...executionWorkspace.warnings,
       ...(runtimeSessionResolution.warning ? [runtimeSessionResolution.warning] : []),
       ...(resetTaskSession && sessionResetReason
@@ -1541,6 +1619,39 @@ export function heartbeatService(db: Db) {
               ...(adapterResult.billingType ? { billingType: adapterResult.billingType } : {}),
             } as Record<string, unknown>)
           : null;
+
+      if (outcome === "succeeded") {
+        const prAutomation = await runPullRequestAutomation({
+          cwd: executionWorkspace.cwd,
+          branchName: executionWorkspace.branchName,
+          issue: issueRef,
+          workspaceMetadata: resolvedWorkspace.workspaceMetadata,
+          projectPullRequestPolicy: projectExecutionWorkspacePolicy?.pullRequestPolicy ?? null,
+          repoRef: executionWorkspace.repoRef,
+        });
+        for (const warning of prAutomation.warnings) {
+          await onLog("stderr", `[paperclip] ${warning}\n`);
+        }
+        if (!prAutomation.skipped && issueId) {
+          const prSummaryLines = [
+            "## Pull Request Automation",
+            "",
+            "- Mode: `agent_auto_open`",
+            `- Committed: ${prAutomation.committed ? "yes" : "no"}`,
+            `- Pushed: ${prAutomation.pushed ? "yes" : "no"}`,
+          ];
+          if (prAutomation.prUrl) prSummaryLines.push(`- PR: ${prAutomation.prUrl}`);
+          if (prAutomation.reason) prSummaryLines.push(`- Status: ${prAutomation.reason}`);
+          try {
+            await issuesSvc.addComment(issueId, prSummaryLines.join("\n"), { agentId: agent.id });
+          } catch (err) {
+            await onLog(
+              "stderr",
+              `[paperclip] Failed to post PR automation comment: ${err instanceof Error ? err.message : String(err)}\n`,
+            );
+          }
+        }
+      }
 
       await setRunStatus(run.id, status, {
         finishedAt: new Date(),

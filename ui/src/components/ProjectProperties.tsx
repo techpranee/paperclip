@@ -6,6 +6,7 @@ import { StatusBadge } from "./StatusBadge";
 import { cn, formatDate } from "../lib/utils";
 import { goalsApi } from "../api/goals";
 import { projectsApi } from "../api/projects";
+import { secretsApi } from "../api/secrets";
 import { ApiError } from "../api/client";
 import { useCompany } from "../context/CompanyContext";
 import { queryKeys } from "../lib/queryKeys";
@@ -161,7 +162,16 @@ export function ProjectProperties({ project, onUpdate, onFieldUpdate, getFieldSa
   const [workspaceMode, setWorkspaceMode] = useState<"local" | "repo" | null>(null);
   const [workspaceCwd, setWorkspaceCwd] = useState("");
   const [workspaceRepoUrl, setWorkspaceRepoUrl] = useState("");
+  const [workspaceRepoRef, setWorkspaceRepoRef] = useState("");
   const [workspaceRepoExplanation, setWorkspaceRepoExplanation] = useState("");
+  const [workspaceRepoPatSecretId, setWorkspaceRepoPatSecretId] = useState("");
+  const [workspaceRepoPatUsername, setWorkspaceRepoPatUsername] = useState("x-access-token");
+  const [workspaceRepoIsBase, setWorkspaceRepoIsBase] = useState(false);
+  const [workspaceInfisicalEnabled, setWorkspaceInfisicalEnabled] = useState(false);
+  const [workspaceInfisicalProjectId, setWorkspaceInfisicalProjectId] = useState("");
+  const [workspaceInfisicalEnvironment, setWorkspaceInfisicalEnvironment] = useState("");
+  const [workspaceInfisicalSecretPath, setWorkspaceInfisicalSecretPath] = useState("");
+  const [workspaceInfisicalMappings, setWorkspaceInfisicalMappings] = useState("");
   const [editingWorkspaceId, setEditingWorkspaceId] = useState<string | null>(null);
   const [editingWorkspaceExplanation, setEditingWorkspaceExplanation] = useState("");
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
@@ -180,6 +190,14 @@ export function ProjectProperties({ project, onUpdate, onFieldUpdate, getFieldSa
     queryFn: () => goalsApi.list(selectedCompanyId!),
     enabled: !!selectedCompanyId,
   });
+
+  const { data: companySecrets } = useQuery({
+    queryKey: selectedCompanyId ? queryKeys.secrets.list(selectedCompanyId) : ["secrets", "none"],
+    queryFn: () => secretsApi.list(selectedCompanyId!),
+    enabled: Boolean(selectedCompanyId),
+  });
+
+  const secretNameById = new Map((companySecrets ?? []).map((secret) => [secret.id, secret.name]));
 
   const linkedGoalIds = project.goalIds.length > 0
     ? project.goalIds
@@ -226,7 +244,16 @@ export function ProjectProperties({ project, onUpdate, onFieldUpdate, getFieldSa
     onSuccess: () => {
       setWorkspaceCwd("");
       setWorkspaceRepoUrl("");
+      setWorkspaceRepoRef("");
       setWorkspaceRepoExplanation("");
+      setWorkspaceRepoPatSecretId("");
+      setWorkspaceRepoPatUsername("x-access-token");
+      setWorkspaceRepoIsBase(false);
+      setWorkspaceInfisicalEnabled(false);
+      setWorkspaceInfisicalProjectId("");
+      setWorkspaceInfisicalEnvironment("");
+      setWorkspaceInfisicalSecretPath("");
+      setWorkspaceInfisicalMappings("");
       setWorkspaceMode(null);
       setWorkspaceError(null);
       invalidateProject();
@@ -318,28 +345,111 @@ export function ProjectProperties({ project, onUpdate, onFieldUpdate, getFieldSa
     }
   };
 
-  const getWorkspaceExplanation = (workspace: Project["workspaces"][number]) => {
-    const metadata = workspace.metadata;
+  const parseWorkspaceMetadata = (metadata: unknown): Record<string, unknown> | null => {
     if (!metadata) return null;
-    const parsedMetadata = (() => {
-      if (typeof metadata === "object") return metadata as Record<string, unknown>;
-      if (typeof metadata === "string") {
-        try {
-          const parsed = JSON.parse(metadata);
-          if (typeof parsed === "object" && parsed !== null) {
-            return parsed as Record<string, unknown>;
-          }
-        } catch {
-          return null;
+    if (typeof metadata === "object") return metadata as Record<string, unknown>;
+    if (typeof metadata === "string") {
+      try {
+        const parsed = JSON.parse(metadata);
+        if (typeof parsed === "object" && parsed !== null) {
+          return parsed as Record<string, unknown>;
         }
+      } catch {
+        return null;
       }
-      return null;
-    })();
+    }
+    return null;
+  };
+
+  const getWorkspaceExplanation = (workspace: Project["workspaces"][number]) => {
+    const parsedMetadata = parseWorkspaceMetadata(workspace.metadata);
     if (!parsedMetadata) return null;
     const explanation = parsedMetadata.explanation;
     if (typeof explanation !== "string") return null;
     const trimmed = explanation.trim();
     return trimmed.length > 0 ? trimmed : null;
+  };
+
+  const getWorkspaceGitAuthSummary = (workspace: Project["workspaces"][number]) => {
+    const parsedMetadata = parseWorkspaceMetadata(workspace.metadata);
+    if (!parsedMetadata) return null;
+    const gitAuth =
+      parsedMetadata.gitAuth && typeof parsedMetadata.gitAuth === "object"
+        ? (parsedMetadata.gitAuth as Record<string, unknown>)
+        : null;
+    if (!gitAuth) return null;
+    const mode = typeof gitAuth.mode === "string" ? gitAuth.mode : null;
+    if (mode !== "github_pat_secret_ref") return null;
+    const patSecretId = typeof gitAuth.patSecretId === "string" ? gitAuth.patSecretId : null;
+    const username = typeof gitAuth.username === "string" ? gitAuth.username : null;
+    if (!patSecretId) return "Git auth: PAT secret configured";
+    const secretName = secretNameById.get(patSecretId) ?? patSecretId;
+    return `Git auth: ${secretName}${username ? ` (user: ${username})` : ""}`;
+  };
+
+  const getWorkspaceInfisicalSummary = (workspace: Project["workspaces"][number]) => {
+    const parsedMetadata = parseWorkspaceMetadata(workspace.metadata);
+    if (!parsedMetadata) return null;
+    const infisical =
+      parsedMetadata.infisical && typeof parsedMetadata.infisical === "object"
+        ? (parsedMetadata.infisical as Record<string, unknown>)
+        : null;
+    if (!infisical || infisical.enabled !== true) return null;
+    const projectId = typeof infisical.projectId === "string" ? infisical.projectId : "";
+    const environment = typeof infisical.environment === "string" ? infisical.environment : "";
+    const secretPath = typeof infisical.secretPath === "string" ? infisical.secretPath : "";
+    const parts = [
+      "Infisical",
+      projectId ? `project=${projectId}` : null,
+      environment ? `env=${environment}` : null,
+      secretPath ? `path=${secretPath}` : null,
+    ].filter(Boolean);
+    return parts.join(" · ");
+  };
+
+  const isWorkspaceBaseRepo = (workspace: Project["workspaces"][number]) => {
+    const parsedMetadata = parseWorkspaceMetadata(workspace.metadata);
+    if (!parsedMetadata) return false;
+    return parsedMetadata.baseRepo === true;
+  };
+
+  const setBaseRepoWorkspace = async (workspaceId: string) => {
+    try {
+      setWorkspaceError(null);
+      const repoWorkspaces = workspaces.filter((workspace) => Boolean(workspace.repoUrl));
+      await Promise.all(
+        repoWorkspaces.map(async (workspace) => {
+          const metadata = parseWorkspaceMetadata(workspace.metadata) ?? {};
+          const nextMetadata: Record<string, unknown> = {
+            ...metadata,
+            baseRepo: workspace.id === workspaceId,
+          };
+          await projectsApi.updateWorkspace(project.id, workspace.id, {
+            metadata: nextMetadata,
+          });
+        }),
+      );
+      invalidateProject();
+    } catch (error) {
+      setWorkspaceError(getApiErrorMessage(error, "Failed to update base repo."));
+    }
+  };
+
+  const parseInfisicalMappings = (text: string): Record<string, string> | null => {
+    const trimmed = text.trim();
+    if (!trimmed) return null;
+    const mappings: Record<string, string> = {};
+    for (const line of trimmed.split(/\r?\n/)) {
+      const raw = line.trim();
+      if (!raw || raw.startsWith("#")) continue;
+      const eq = raw.indexOf("=");
+      if (eq <= 0) continue;
+      const envKey = raw.slice(0, eq).trim();
+      const sourceKey = raw.slice(eq + 1).trim();
+      if (!envKey || !sourceKey) continue;
+      mappings[envKey] = sourceKey;
+    }
+    return Object.keys(mappings).length > 0 ? mappings : null;
   };
 
   const beginEditWorkspaceExplanation = (workspace: Project["workspaces"][number]) => {
@@ -392,17 +502,58 @@ export function ProjectProperties({ project, onUpdate, onFieldUpdate, getFieldSa
 
   const submitRepoWorkspace = () => {
     const repoUrl = workspaceRepoUrl.trim();
+    const repoRef = workspaceRepoRef.trim();
     const repoExplanation = workspaceRepoExplanation.trim();
+    const patSecretId = workspaceRepoPatSecretId.trim();
+    const patUsername = workspaceRepoPatUsername.trim();
+    const infisicalProjectId = workspaceInfisicalProjectId.trim();
+    const infisicalEnvironment = workspaceInfisicalEnvironment.trim();
+    const infisicalSecretPath = workspaceInfisicalSecretPath.trim();
+    const infisicalMappings = parseInfisicalMappings(workspaceInfisicalMappings);
     if (!isGitHubRepoUrl(repoUrl)) {
       setWorkspaceError("Repo workspace must use a valid GitHub repo URL.");
       return;
     }
+    if (patSecretId.length > 0 && !secretNameById.has(patSecretId)) {
+      setWorkspaceError("Select a valid PAT secret from the list.");
+      return;
+    }
+    if (workspaceInfisicalEnabled && (!infisicalProjectId || !infisicalEnvironment)) {
+      setWorkspaceError("Infisical requires both project id and environment.");
+      return;
+    }
     setWorkspaceError(null);
+
+    const metadata: Record<string, unknown> = {};
+    if (repoExplanation.length > 0) {
+      metadata.explanation = repoExplanation;
+    }
+    if (workspaceRepoIsBase) {
+      metadata.baseRepo = true;
+    }
+    if (patSecretId.length > 0) {
+      metadata.gitAuth = {
+        mode: "github_pat_secret_ref",
+        patSecretId,
+        ...(patUsername.length > 0 ? { username: patUsername } : {}),
+      };
+    }
+    if (workspaceInfisicalEnabled) {
+      metadata.infisical = {
+        enabled: true,
+        projectId: infisicalProjectId,
+        environment: infisicalEnvironment,
+        ...(infisicalSecretPath.length > 0 ? { secretPath: infisicalSecretPath } : {}),
+        ...(infisicalMappings ? { mappings: infisicalMappings } : {}),
+      };
+    }
+
     createWorkspace.mutate({
       name: deriveWorkspaceNameFromRepo(repoUrl),
       cwd: REPO_ONLY_CWD_SENTINEL,
       repoUrl,
-      ...(repoExplanation.length > 0 ? { metadata: { explanation: repoExplanation } } : {}),
+      ...(repoRef.length > 0 ? { repoRef } : {}),
+      ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
     });
   };
 
@@ -614,16 +765,23 @@ export function ProjectProperties({ project, onUpdate, onFieldUpdate, getFieldSa
                   {workspace.repoUrl ? (
                     <div className="py-1 space-y-1.5">
                       <div className="flex items-center justify-between gap-2">
-                        <a
-                          href={workspace.repoUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground hover:underline"
-                        >
-                          <Github className="h-3 w-3 shrink-0" />
-                          <span className="truncate">{formatGitHubRepo(workspace.repoUrl)}</span>
-                          <ExternalLink className="h-3 w-3 shrink-0" />
-                        </a>
+                        <div className="inline-flex min-w-0 items-center gap-1.5">
+                          <a
+                            href={workspace.repoUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground hover:underline"
+                          >
+                            <Github className="h-3 w-3 shrink-0" />
+                            <span className="truncate">{formatGitHubRepo(workspace.repoUrl)}</span>
+                            <ExternalLink className="h-3 w-3 shrink-0" />
+                          </a>
+                          {isWorkspaceBaseRepo(workspace) ? (
+                            <span className="rounded-full border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                              Base repo
+                            </span>
+                          ) : null}
+                        </div>
                         <Button
                           variant="ghost"
                           size="icon-xs"
@@ -663,6 +821,16 @@ export function ProjectProperties({ project, onUpdate, onFieldUpdate, getFieldSa
                         </div>
                       ) : (
                         <div className="space-y-1.5">
+                          {getWorkspaceGitAuthSummary(workspace) ? (
+                            <p className="text-xs text-muted-foreground leading-relaxed">
+                              {getWorkspaceGitAuthSummary(workspace)}
+                            </p>
+                          ) : null}
+                          {getWorkspaceInfisicalSummary(workspace) ? (
+                            <p className="text-xs text-muted-foreground leading-relaxed">
+                              {getWorkspaceInfisicalSummary(workspace)}
+                            </p>
+                          ) : null}
                           {getWorkspaceExplanation(workspace) ? (
                             <p className="text-xs text-muted-foreground leading-relaxed">
                               {getWorkspaceExplanation(workspace)}
@@ -671,14 +839,26 @@ export function ProjectProperties({ project, onUpdate, onFieldUpdate, getFieldSa
                             <p className="text-xs text-muted-foreground">No explanation yet.</p>
                           )}
                           <div>
-                            <Button
-                              variant="ghost"
-                              size="xs"
-                              className="h-6 px-2"
-                              onClick={() => beginEditWorkspaceExplanation(workspace)}
-                            >
-                              Edit note
-                            </Button>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                variant="ghost"
+                                size="xs"
+                                className="h-6 px-2"
+                                onClick={() => beginEditWorkspaceExplanation(workspace)}
+                              >
+                                Edit note
+                              </Button>
+                              {!isWorkspaceBaseRepo(workspace) ? (
+                                <Button
+                                  variant="ghost"
+                                  size="xs"
+                                  className="h-6 px-2"
+                                  onClick={() => setBaseRepoWorkspace(workspace.id)}
+                                >
+                                  Mark as base
+                                </Button>
+                              ) : null}
+                            </div>
                           </div>
                         </div>
                       )}
@@ -846,6 +1026,76 @@ export function ProjectProperties({ project, onUpdate, onFieldUpdate, getFieldSa
                 onChange={(e) => setWorkspaceRepoUrl(e.target.value)}
                 placeholder="https://github.com/org/repo"
               />
+              <input
+                className="w-full rounded border border-border bg-transparent px-2 py-1 text-xs outline-none"
+                value={workspaceRepoRef}
+                onChange={(e) => setWorkspaceRepoRef(e.target.value)}
+                placeholder="Base ref (optional, e.g. origin/main)"
+              />
+              <select
+                className="w-full rounded border border-border bg-transparent px-2 py-1 text-xs outline-none"
+                value={workspaceRepoPatSecretId}
+                onChange={(e) => setWorkspaceRepoPatSecretId(e.target.value)}
+              >
+                <option value="">No PAT secret (public repo / pre-auth host)</option>
+                {(companySecrets ?? []).map((secret) => (
+                  <option key={secret.id} value={secret.id}>
+                    {secret.name}
+                  </option>
+                ))}
+              </select>
+              {workspaceRepoPatSecretId.trim().length > 0 ? (
+                <input
+                  className="w-full rounded border border-border bg-transparent px-2 py-1 text-xs outline-none"
+                  value={workspaceRepoPatUsername}
+                  onChange={(e) => setWorkspaceRepoPatUsername(e.target.value)}
+                  placeholder="Git username for PAT auth (default: x-access-token)"
+                />
+              ) : null}
+              <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={workspaceRepoIsBase}
+                  onChange={(e) => setWorkspaceRepoIsBase(e.target.checked)}
+                />
+                Mark this repo as base repo for the project
+              </label>
+              <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={workspaceInfisicalEnabled}
+                  onChange={(e) => setWorkspaceInfisicalEnabled(e.target.checked)}
+                />
+                Enable Infisical secrets for this repo
+              </label>
+              {workspaceInfisicalEnabled ? (
+                <>
+                  <input
+                    className="w-full rounded border border-border bg-transparent px-2 py-1 text-xs outline-none"
+                    value={workspaceInfisicalProjectId}
+                    onChange={(e) => setWorkspaceInfisicalProjectId(e.target.value)}
+                    placeholder="Infisical project id"
+                  />
+                  <input
+                    className="w-full rounded border border-border bg-transparent px-2 py-1 text-xs outline-none"
+                    value={workspaceInfisicalEnvironment}
+                    onChange={(e) => setWorkspaceInfisicalEnvironment(e.target.value)}
+                    placeholder="Infisical environment (e.g. prod)"
+                  />
+                  <input
+                    className="w-full rounded border border-border bg-transparent px-2 py-1 text-xs outline-none"
+                    value={workspaceInfisicalSecretPath}
+                    onChange={(e) => setWorkspaceInfisicalSecretPath(e.target.value)}
+                    placeholder="Infisical secret path (optional, default: /)"
+                  />
+                  <textarea
+                    className="w-full rounded border border-border bg-transparent px-2 py-1 text-xs outline-none resize-y min-h-[56px]"
+                    value={workspaceInfisicalMappings}
+                    onChange={(e) => setWorkspaceInfisicalMappings(e.target.value)}
+                    placeholder={"Env mappings (optional)\nDATABASE_URL=db_url\nREDIS_URL=redis_url"}
+                  />
+                </>
+              ) : null}
               <textarea
                 className="w-full rounded border border-border bg-transparent px-2 py-1 text-xs outline-none resize-y min-h-[64px]"
                 value={workspaceRepoExplanation}
@@ -869,7 +1119,16 @@ export function ProjectProperties({ project, onUpdate, onFieldUpdate, getFieldSa
                   onClick={() => {
                     setWorkspaceMode(null);
                     setWorkspaceRepoUrl("");
+                    setWorkspaceRepoRef("");
                     setWorkspaceRepoExplanation("");
+                    setWorkspaceRepoPatSecretId("");
+                    setWorkspaceRepoPatUsername("x-access-token");
+                    setWorkspaceRepoIsBase(false);
+                    setWorkspaceInfisicalEnabled(false);
+                    setWorkspaceInfisicalProjectId("");
+                    setWorkspaceInfisicalEnvironment("");
+                    setWorkspaceInfisicalSecretPath("");
+                    setWorkspaceInfisicalMappings("");
                     setWorkspaceError(null);
                   }}
                 >

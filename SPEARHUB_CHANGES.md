@@ -11,11 +11,11 @@ Deploy Paperclip as an internal company control plane where agents can:
 
 ## Current Reality (as of this branch)
 
-- Project workspaces already store `cwd`, `repoUrl`, and `repoRef`.
-- Heartbeat execution requires a local `cwd`; when unavailable it falls back to agent-home.
-- Automatic clone/fetch from `repoUrl` is not yet implemented.
-- Worktree runtime support exists (`git_worktree` strategy), but PR policy automation is not fully enforced end-to-end.
-- Secrets service exists with provider abstraction, but Infisical provider integration is not yet wired.
+- Project workspaces store `cwd`, `repoUrl`, `repoRef`, and structured `metadata` for git auth / PR policy / Infisical linkage.
+- Heartbeat can materialize repo-only workspaces from `repoUrl` with PAT secret-ref auth before adapter execution.
+- Worktree runtime support exists (`git_worktree` strategy) and execution context now carries workspace metadata.
+- Infisical workspace linkage is wired into run-time env injection (with warning surface + secret-key redaction integration).
+- PR automation now runs on successful issue executions when pull-request mode resolves to `agent_auto_open`.
 
 ## Implementation Plan
 
@@ -60,7 +60,7 @@ Resolve and enforce isolated worktree policy for coding agents:
 - branch template from issue context (`{{issue.identifier}}-{{slug}}`)
 - avoid direct changes on project primary branch
 
-### Phase 5 — PR workflow automation
+### Phase 5 — PR workflow automation (started)
 
 Introduce explicit PR policy handling:
 
@@ -68,6 +68,13 @@ Introduce explicit PR policy handling:
 - optional auto-push on issue done
 - persist PR URL/number/status in issue metadata/activity
 - never auto-merge unless explicitly configured in future policy
+
+Implemented in this branch slice:
+
+- heartbeat success hook invokes PR automation when mode resolves to `agent_auto_open`
+- run-time flow performs `git add/commit/push` and `gh pr create` (or reuses existing PR)
+- PR automation summary is posted as an issue comment
+- warnings are emitted into run stderr log stream
 
 ### Phase 6 — Infisical provider integration
 
@@ -126,7 +133,7 @@ Project workspace UI and API should support:
 
 ## Immediate Next Steps
 
-1. Complete shared/server contract wiring for workspace metadata.
-2. Add server git materialization service with PAT secret-ref auth.
-3. Integrate materialization path into heartbeat workspace resolution.
-4. Add focused tests for private clone auth and safe redaction.
+1. Add focused tests for PR automation paths (commit/push/create PR/no-op cases).
+2. Persist structured PR metadata (url/number/state) on issues or run artifacts.
+3. Add approval-gated handling for `approval_required` PR mode.
+4. Expand audit/activity events for clone/fetch/push/pr operations.
