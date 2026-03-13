@@ -2,11 +2,10 @@ import type { AdapterConfigFieldsProps } from "../types";
 import {
   Field,
   ToggleField,
-  DraftInput,
   DraftNumberInput,
   help,
 } from "../../components/agent-config-primitives";
-import { ChoosePathButton } from "../../components/PathInstructionsModal";
+import { AgentInstructionsPathField } from "../instructions-path-field";
 import { LocalWorkspaceRuntimeFields } from "../local-workspace-runtime-fields";
 
 const inputClass =
@@ -28,30 +27,24 @@ export function ClaudeLocalConfigFields({
 }: AdapterConfigFieldsProps) {
   return (
     <>
-      <Field label="Agent instructions file" hint={instructionsFileHint}>
-        <div className="flex items-center gap-2">
-          <DraftInput
-            value={
-              isCreate
-                ? values!.instructionsFilePath ?? ""
-                : eff(
-                    "adapterConfig",
-                    "instructionsFilePath",
-                    String(config.instructionsFilePath ?? ""),
-                  )
-            }
-            onCommit={(v) =>
-              isCreate
-                ? set!({ instructionsFilePath: v })
-                : mark("adapterConfig", "instructionsFilePath", v || undefined)
-            }
-            immediate
-            className={inputClass}
-            placeholder="/absolute/path/to/AGENTS.md"
-          />
-          <ChoosePathButton />
-        </div>
-      </Field>
+      <AgentInstructionsPathField
+        hint={instructionsFileHint}
+        value={
+          isCreate
+            ? values!.instructionsFilePath ?? ""
+            : eff(
+                "adapterConfig",
+                "instructionsFilePath",
+                String(config.instructionsFilePath ?? ""),
+              )
+        }
+        onCommit={(v) =>
+          isCreate
+            ? set!({ instructionsFilePath: v })
+            : mark("adapterConfig", "instructionsFilePath", v || undefined)
+        }
+        className={inputClass}
+      />
       <LocalWorkspaceRuntimeFields
         isCreate={isCreate}
         values={values}

@@ -20,12 +20,23 @@ services:
       PAPERCLIP_DEPLOYMENT_EXPOSURE: "private"
       PAPERCLIP_PUBLIC_URL: "${PAPERCLIP_PUBLIC_URL:?PAPERCLIP_PUBLIC_URL must be set}"
       BETTER_AUTH_SECRET: "${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET must be set}"
+      PAPERCLIP_AGENT_JWT_SECRET: "${PAPERCLIP_AGENT_JWT_SECRET:?PAPERCLIP_AGENT_JWT_SECRET must be set}"
 
-      # ── Secrets encryption key (auto-created if omitted) ────────────────────
-      # PAPERCLIP_SECRETS_MASTER_KEY: "${PAPERCLIP_SECRETS_MASTER_KEY}"
+      # ── Secrets & Runtime Portability ───────────────────────────────────────
+      # Keep this stable across deployments so encrypted secrets in Postgres remain decryptable
+      PAPERCLIP_SECRETS_MASTER_KEY: "${PAPERCLIP_SECRETS_MASTER_KEY:?PAPERCLIP_SECRETS_MASTER_KEY must be set}"
+
+      # Disable filesystem DB backups in container when you already back up Postgres externally
+      PAPERCLIP_DB_BACKUP_ENABLED: "false"
+
+      # Optional: move asset storage off container disk (recommended for multi-node)
+      # PAPERCLIP_STORAGE_PROVIDER: "s3"
+      # PAPERCLIP_STORAGE_S3_BUCKET: "your-bucket"
+      # PAPERCLIP_STORAGE_S3_REGION: "ap-south-1"
+      # PAPERCLIP_STORAGE_S3_PREFIX: "paperclip"
 
     volumes:
-      # Persists secrets master key, config and any local state.
+      # Persists config and any local state.
       # Map to a named volume or a bind-mount on your host.
       - paperclip-data:/paperclip
 

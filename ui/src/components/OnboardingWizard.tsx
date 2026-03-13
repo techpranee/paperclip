@@ -69,7 +69,7 @@ const DEFAULT_TASK_DESCRIPTION = `Setup yourself as the CEO. Use the ceo persona
 
 https://github.com/paperclipai/companies/blob/main/default/ceo/AGENTS.md
 
-Ensure you have a folder agents/ceo and then download this AGENTS.md, and sibling HEARTBEAT.md, SOUL.md, and TOOLS.md. and set that AGENTS.md as the path to your agents instruction file
+For server or container deployments, copy the AGENTS.md content into the agent Prompt Template so it is stored in Postgres. Only use an agent instructions file path if it points to a path that exists inside the runtime container.
 
 After that, hire yourself a Founding Engineer agent and then plan the roadmap and tasks for your new company.`;
 

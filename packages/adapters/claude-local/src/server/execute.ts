@@ -360,11 +360,30 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   // --append-system-prompt-file (Claude CLI forbids using both flags together).
   let effectiveInstructionsFilePath = instructionsFilePath;
   if (instructionsFilePath) {
-    const instructionsContent = await fs.readFile(instructionsFilePath, "utf-8");
-    const pathDirective = `\nThe above agent instructions were loaded from ${instructionsFilePath}. Resolve any relative file references from ${instructionsFileDir}.`;
-    const combinedPath = path.join(skillsDir, "agent-instructions.md");
-    await fs.writeFile(combinedPath, instructionsContent + pathDirective, "utf-8");
-    effectiveInstructionsFilePath = combinedPath;
+    try {
+      const instructionsContent = await fs.readFile(instructionsFilePath, "utf-8");
+      const pathDirective = `\nThe above agent instructions were loaded from ${instructionsFilePath}. Resolve any relative file references from ${instructionsFileDir}.`;
+      const combinedPath = path.join(skillsDir, "agent-instructions.md");
+      await fs.writeFile(combinedPath, instructionsContent + pathDirective, "utf-8");
+      effectiveInstructionsFilePath = combinedPath;
+    } catch (error) {
+      const code =
+        typeof error === "object" && error !== null && "code" in error
+          ? String((error as { code?: unknown }).code ?? "")
+          : "";
+      if (code === "ENOENT") {
+        effectiveInstructionsFilePath = "";
+        commandNotes.push(
+          `Skipped instructions file ${instructionsFilePath} because it was not found at runtime (continuing without injected instructions).`,
+        );
+        await onLog(
+          "stderr",
+          `[paperclip] Instructions file not found: ${instructionsFilePath}; continuing without --append-system-prompt-file.\n`,
+        );
+      } else {
+        throw error;
+      }
+    }
   }
 
   const runtimeSessionParams = parseObject(runtime.sessionParams);
