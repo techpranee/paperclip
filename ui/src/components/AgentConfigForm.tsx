@@ -126,6 +126,45 @@ function formatArgList(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
+function adapterModelsDiscoveryFingerprint(adapterType: string, adapterConfig: Record<string, unknown>): string {
+  const env =
+    typeof adapterConfig.env === "object" && adapterConfig.env !== null && !Array.isArray(adapterConfig.env)
+      ? (adapterConfig.env as Record<string, unknown>)
+      : {};
+  const rawBaseUrl = env.ANTHROPIC_BASE_URL;
+  const envBaseUrl =
+    typeof rawBaseUrl === "string"
+      ? rawBaseUrl.trim()
+      : typeof rawBaseUrl === "object" && rawBaseUrl !== null && !Array.isArray(rawBaseUrl)
+        ? typeof (rawBaseUrl as Record<string, unknown>).value === "string"
+          ? String((rawBaseUrl as Record<string, unknown>).value).trim()
+          : ""
+        : "";
+  const hasEnvApiKey = (() => {
+    const raw = env.ANTHROPIC_API_KEY;
+    if (typeof raw === "string") return raw.trim().length > 0;
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return false;
+    const rec = raw as Record<string, unknown>;
+    if (rec.type === "plain" && typeof rec.value === "string") return rec.value.trim().length > 0;
+    if (rec.type === "secret_ref" && typeof rec.secretId === "string") return rec.secretId.trim().length > 0;
+    return false;
+  })();
+
+  return JSON.stringify({
+    adapterType,
+    command: typeof adapterConfig.command === "string" ? adapterConfig.command : "",
+    cwd: typeof adapterConfig.cwd === "string" ? adapterConfig.cwd : "",
+    anthropicBaseUrl: typeof adapterConfig.anthropicBaseUrl === "string" ? adapterConfig.anthropicBaseUrl : "",
+    ollamaLinkUrl: typeof adapterConfig.ollamaLinkUrl === "string" ? adapterConfig.ollamaLinkUrl : "",
+    ollamaCloudUrl: typeof adapterConfig.ollamaCloudUrl === "string" ? adapterConfig.ollamaCloudUrl : "",
+    envBaseUrl,
+    hasAnthropicApiKey:
+      hasEnvApiKey ||
+      (typeof adapterConfig.anthropicApiKey === "string" && adapterConfig.anthropicApiKey.trim().length > 0) ||
+      (typeof adapterConfig.ollamaLinkApiKey === "string" && adapterConfig.ollamaLinkApiKey.trim().length > 0),
+  });
+}
+
 const codexThinkingEffortOptions = [
   { id: "", label: "Auto" },
   { id: "minimal", label: "Minimal" },
@@ -164,6 +203,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   const isCreate = mode === "create";
   const cards = props.sectionLayout === "cards";
   const { selectedCompanyId } = useCompany();
+  const effectiveCompanyId = selectedCompanyId ?? (!isCreate ? props.agent.companyId : null);
   const queryClient = useQueryClient();
 
   const { data: availableSecrets = [] } = useQuery({
@@ -293,11 +333,17 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
     data: fetchedModels,
     error: fetchedModelsError,
   } = useQuery({
-    queryKey: selectedCompanyId
-      ? queryKeys.agents.adapterModels(selectedCompanyId, adapterType)
+    queryKey: effectiveCompanyId
+      ? [
+          ...queryKeys.agents.adapterModels(effectiveCompanyId, adapterType),
+          adapterModelsDiscoveryFingerprint(adapterType, buildAdapterConfigForTest()),
+        ]
       : ["agents", "none", "adapter-models", adapterType],
-    queryFn: () => agentsApi.adapterModels(selectedCompanyId!, adapterType),
-    enabled: Boolean(selectedCompanyId),
+    queryFn: () =>
+      agentsApi.adapterModels(effectiveCompanyId!, adapterType, {
+        adapterConfig: buildAdapterConfigForTest(),
+      }),
+    enabled: Boolean(effectiveCompanyId),
   });
   const models = fetchedModels ?? externalModels ?? [];
 
@@ -327,19 +373,31 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
     : null;
 
   function buildAdapterConfigForTest(): Record<string, unknown> {
+    const normalizeClaudeOllamaAlias = (input: Record<string, unknown>) => {
+      if (adapterType !== "claude_local") return input;
+      if (typeof input.ollamaLinkUrl === "string" && input.ollamaLinkUrl.trim().length > 0) return input;
+      if (typeof input.ollamaCloudUrl === "string" && input.ollamaCloudUrl.trim().length > 0) {
+        return {
+          ...input,
+          ollamaLinkUrl: input.ollamaCloudUrl,
+        };
+      }
+      return input;
+    };
+
     if (isCreate) {
-      return uiAdapter.buildAdapterConfig(val!);
+      return normalizeClaudeOllamaAlias(uiAdapter.buildAdapterConfig(val!));
     }
     const base = config as Record<string, unknown>;
-    return { ...base, ...overlay.adapterConfig };
+    return normalizeClaudeOllamaAlias({ ...base, ...overlay.adapterConfig });
   }
 
   const testEnvironment = useMutation({
     mutationFn: async () => {
-      if (!selectedCompanyId) {
+      if (!effectiveCompanyId) {
         throw new Error("Select a company to test adapter environment");
       }
-      return agentsApi.testEnvironment(selectedCompanyId, adapterType, {
+      return agentsApi.testEnvironment(effectiveCompanyId, adapterType, {
         adapterConfig: buildAdapterConfigForTest(),
       });
     },

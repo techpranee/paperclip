@@ -138,7 +138,8 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
     : [];
   const runtimePrimaryUrl = asString(context.paperclipRuntimePrimaryUrl, "");
   const configuredCwd = asString(config.cwd, "");
-  const useConfiguredInsteadOfAgentHome = workspaceSource === "agent_home" && configuredCwd.length > 0;
+  const workspaceIsEffectiveFallback = workspaceContext.isEffectiveFallback === true;
+  const useConfiguredInsteadOfAgentHome = configuredCwd.length > 0 && (workspaceSource === "agent_home" || workspaceIsEffectiveFallback);
   const effectiveWorkspaceCwd = useConfiguredInsteadOfAgentHome ? "" : workspaceCwd;
   const cwd = effectiveWorkspaceCwd || configuredCwd || process.cwd();
   await ensureAbsoluteDirectory(cwd, { createIfMissing: true });
@@ -325,7 +326,21 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const effort = asString(config.effort, "");
   const chrome = asBoolean(config.chrome, false);
   const maxTurns = asNumber(config.maxTurnsPerRun, 0);
-  const dangerouslySkipPermissions = asBoolean(config.dangerouslySkipPermissions, false);
+  const allowFileRead = asBoolean(config.allowFileRead, false);
+  const allowFileWrite = asBoolean(config.allowFileWrite, false);
+  const allowNetwork = asBoolean(config.allowNetwork, false);
+  const allowShellExec = asBoolean(config.allowShellExec, false);
+  const allowedFilePathsRaw = asString(config.allowedFilePaths, "");
+  const allowedFilePaths = allowedFilePathsRaw
+    ? allowedFilePathsRaw.split(/[,\n]/).map((s) => s.trim()).filter(Boolean)
+    : [];
+  const dangerouslySkipPermissions =
+    asBoolean(config.dangerouslySkipPermissions, false) ||
+    allowedFilePaths.length > 0 ||
+    allowFileRead ||
+    allowFileWrite ||
+    allowNetwork ||
+    allowShellExec;
   const instructionsFilePath = asString(config.instructionsFilePath, "").trim();
   const instructionsFileDir = instructionsFilePath ? `${path.dirname(instructionsFilePath)}/` : "";
   const commandNotes = instructionsFilePath
@@ -333,6 +348,27 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         `Injected agent instructions via --append-system-prompt-file ${instructionsFilePath} (with path directive appended)`,
       ]
     : [];
+
+  // Pre-compute project hint dirs for --add-dir usage in buildClaudeArgs.
+  // This is needed when in a fallback scenario and the configured cwd differs from
+  // the intended project directory recorded in workspace hints.
+  const _wsCtx = parseObject(context.paperclipWorkspace);
+  const _wsSource = asString(_wsCtx.source, "");
+  const _wsIsEffectiveFallback = _wsCtx.isEffectiveFallback === true;
+  const _wsHints = Array.isArray(context.paperclipWorkspaces)
+    ? (context.paperclipWorkspaces as unknown[]).filter(
+        (v): v is Record<string, unknown> => typeof v === "object" && v !== null,
+      )
+    : [];
+  const additionalProjectHintDirs: string[] = [];
+  if (_wsSource === "agent_home" || _wsIsEffectiveFallback) {
+    for (const hint of _wsHints) {
+      const h = typeof hint.cwd === "string" && hint.cwd.trim().length > 0 ? hint.cwd.trim() : "";
+      if (!h) continue;
+      const hExists = await fs.stat(h).then((s) => s.isDirectory()).catch(() => false);
+      if (hExists) additionalProjectHintDirs.push(h);
+    }
+  }
 
   const runtimeConfig = await buildClaudeRuntimeConfig({
     runId,
@@ -399,7 +435,16 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       `[paperclip] Claude session "${runtimeSessionId}" was saved for cwd "${runtimeSessionCwd}" and will not be resumed in "${cwd}".\n`,
     );
   }
-  const prompt = renderTemplate(promptTemplate, {
+  const allowedPathsNote =
+    allowedFilePaths.length > 0
+      ? `Explicitly permitted file paths for this run:\n${allowedFilePaths.map((p) => `  - ${p}`).join("\n")}\n\n`
+      : "";
+  const toolInputContractNote =
+    "Tool-input contract reminder:\n" +
+    "- Do not call Read without a filePath.\n" +
+    "- filePath must be a non-empty absolute path string.\n" +
+    "- If a path is unknown, discover it first via listing/search before calling Read.\n\n";
+  const prompt = allowedPathsNote + toolInputContractNote + renderTemplate(promptTemplate, {
     agentId: agent.id,
     companyId: agent.companyId,
     runId,
@@ -421,6 +466,28 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       args.push("--append-system-prompt-file", effectiveInstructionsFilePath);
     }
     args.push("--add-dir", skillsDir);
+    // Grant Claude explicit read access to the instructions file directory when it
+    // falls outside cwd (e.g. instructionsFilePath is in a sibling repo).
+    if (instructionsFilePath) {
+      const resolvedCwd = path.resolve(cwd);
+      const resolvedInstructionsDir = path.resolve(path.dirname(instructionsFilePath));
+      if (
+        resolvedInstructionsDir !== resolvedCwd &&
+        !resolvedInstructionsDir.startsWith(resolvedCwd + path.sep)
+      ) {
+        args.push("--add-dir", resolvedInstructionsDir);
+      }
+    }
+    // Grant Claude read access to any project workspace dirs that exist on disk but
+    // differ from cwd — covers the fallback-workspace scenario where configuredCwd
+    // doesn't match the intended project directory.
+    for (const dir of additionalProjectHintDirs) {
+      const resolvedCwd = path.resolve(cwd);
+      const resolvedDir = path.resolve(dir);
+      if (resolvedDir !== resolvedCwd && !resolvedDir.startsWith(resolvedCwd + path.sep)) {
+        args.push("--add-dir", dir);
+      }
+    }
     if (extraArgs.length > 0) args.push(...extraArgs);
     return args;
   };

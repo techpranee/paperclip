@@ -94,6 +94,12 @@ export const testAdapterEnvironmentSchema = z.object({
 
 export type TestAdapterEnvironment = z.infer<typeof testAdapterEnvironmentSchema>;
 
+export const discoverAdapterModelsSchema = z.object({
+  adapterConfig: adapterConfigSchema.optional().default({}),
+});
+
+export type DiscoverAdapterModels = z.infer<typeof discoverAdapterModelsSchema>;
+
 export const updateAgentPermissionsSchema = z.object({
   canCreateAgents: z.boolean(),
 });

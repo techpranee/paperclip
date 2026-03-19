@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { resolveDefaultAgentWorkspaceDir } from "../home-paths.js";
 import {
+  getRetryFailedRunSkipReason,
   resolveRuntimeSessionParamsForWorkspace,
   shouldResetTaskSessionForWake,
   type ResolvedWorkspaceForRun,
@@ -139,5 +140,47 @@ describe("shouldResetTaskSessionForWake", () => {
         wakeTriggerDetail: "callback",
       }),
     ).toBe(false);
+  });
+});
+
+describe("getRetryFailedRunSkipReason", () => {
+  it("does not skip non-retry wakes", () => {
+    expect(
+      getRetryFailedRunSkipReason({
+        reason: "issue_assigned",
+        issue: { status: "done", assigneeAgentId: "agent-1" },
+        agentId: "agent-1",
+      }),
+    ).toBeNull();
+  });
+
+  it("skips retry_failed_run when the linked issue is already closed", () => {
+    expect(
+      getRetryFailedRunSkipReason({
+        reason: "retry_failed_run",
+        issue: { status: "done", assigneeAgentId: "agent-1" },
+        agentId: "agent-1",
+      }),
+    ).toBe("retry_failed_run_issue_closed");
+  });
+
+  it("skips retry_failed_run when the linked issue has been reassigned", () => {
+    expect(
+      getRetryFailedRunSkipReason({
+        reason: "retry_failed_run",
+        issue: { status: "todo", assigneeAgentId: "agent-2" },
+        agentId: "agent-1",
+      }),
+    ).toBe("retry_failed_run_issue_reassigned");
+  });
+
+  it("allows retry_failed_run when the issue is still open and assigned", () => {
+    expect(
+      getRetryFailedRunSkipReason({
+        reason: "retry_failed_run",
+        issue: { status: "blocked", assigneeAgentId: "agent-1" },
+        agentId: "agent-1",
+      }),
+    ).toBeNull();
   });
 });

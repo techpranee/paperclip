@@ -44,7 +44,7 @@ import {
   logActivity,
   notifyHireApproved
 } from "../services/index.js";
-import { assertCompanyAccess } from "./authz.js";
+import { assertCompanyAccess, getActorInfo } from "./authz.js";
 import {
   claimBoardOwnership,
   inspectBoardClaimChallenge
@@ -2539,6 +2539,47 @@ export function accessRoutes(
     const members = await access.listMembers(companyId);
     res.json(members);
   });
+
+  // Board-level endpoint: set permission grants directly on an agent principal
+  // (creates/upserts the membership if needed, then sets grants)
+  router.patch(
+    "/companies/:companyId/agents/:agentId/grants",
+    validate(updateMemberPermissionsSchema),
+    async (req, res) => {
+      const companyId = req.params.companyId as string;
+      const agentId = req.params.agentId as string;
+      assertCompanyAccess(req, companyId);
+      if (req.actor.type === "agent") throw forbidden("Board access required");
+      if (req.actor.type !== "board") throw unauthorized();
+
+      const agent = await agents.getById(agentId);
+      if (!agent || agent.companyId !== companyId) throw notFound("Agent not found");
+
+      await access.ensureMembership(companyId, "agent", agentId, "member", "active");
+      await access.setPrincipalGrants(
+        companyId,
+        "agent",
+        agentId,
+        req.body.grants ?? [],
+        req.actor.userId ?? null,
+      );
+
+      const actor = getActorInfo(req);
+      await logActivity(db, {
+        companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "agent.grants_updated",
+        entityType: "agent",
+        entityId: agentId,
+        details: req.body,
+      });
+
+      res.json({ agentId, grants: req.body.grants ?? [] });
+    },
+  );
 
   router.patch(
     "/companies/:companyId/members/:memberId/permissions",

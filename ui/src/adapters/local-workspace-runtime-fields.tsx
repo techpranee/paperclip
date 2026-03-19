@@ -20,14 +20,14 @@ export function LocalWorkspaceRuntimeFields({
             ? values!.ollamaCloudUrl ?? ""
             : eff(
                 "adapterConfig",
-                "ollamaCloudUrl",
-                String(config.ollamaCloudUrl ?? ""),
+                "ollamaLinkUrl",
+                String(config.ollamaLinkUrl ?? config.ollamaCloudUrl ?? ""),
               )
         }
         onCommit={(v) =>
           isCreate
             ? set!({ ollamaCloudUrl: v })
-            : mark("adapterConfig", "ollamaCloudUrl", v || undefined)
+            : mark("adapterConfig", "ollamaLinkUrl", v || undefined)
         }
         immediate
         className={inputClass}

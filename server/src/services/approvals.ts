@@ -147,6 +147,62 @@ export function approvalService(db: Db) {
         }
       }
 
+      // Grant the requested permissions by patching the requesting agent's adapterConfig
+      if (applied && updated.type === "permission_request" && updated.requestedByAgentId) {
+        const payload = updated.payload as Record<string, unknown>;
+        const rejections = Array.isArray(payload.rejections)
+          ? (payload.rejections as { permissionType: string; path: string }[]).filter(
+              (r) => typeof r === "object" && r !== null,
+            )
+          : [];
+        if (rejections.length > 0) {
+          try {
+            const agent = await agentsSvc.getById(updated.requestedByAgentId);
+            if (agent) {
+              const currentConfig = (agent.adapterConfig ?? {}) as Record<string, unknown>;
+              const existingPaths = String(currentConfig.allowedFilePaths ?? "");
+              const existingPathSet = new Set(
+                existingPaths ? existingPaths.split(",").map((s) => s.trim()).filter(Boolean) : [],
+              );
+              for (const r of rejections) {
+                if (!r.path) continue;
+                const normalizedPath = r.path.trim();
+                if (!normalizedPath) continue;
+                existingPathSet.add(normalizedPath);
+                if (normalizedPath.endsWith("/*")) {
+                  const baseDir = normalizedPath.slice(0, -2);
+                  if (baseDir) {
+                    existingPathSet.add(baseDir);
+                    existingPathSet.add(baseDir.endsWith("/") ? baseDir : `${baseDir}/`);
+                  }
+                }
+              }
+              const hasReadRejection = rejections.some((r) => r.permissionType === "read");
+              const hasWriteRejection = rejections.some((r) => r.permissionType === "write");
+              const hasExecRejection = rejections.some(
+                (r) => r.permissionType === "exec" || r.permissionType === "shell",
+              );
+              const hasNetworkRejection = rejections.some((r) => r.permissionType === "network");
+              await agentsSvc.update(updated.requestedByAgentId, {
+                adapterConfig: {
+                  ...currentConfig,
+                  allowedFilePaths: Array.from(existingPathSet).join(", "),
+                  ...(hasReadRejection || rejections.some((r) => r.permissionType === "external_directory")
+                    ? { allowFileRead: true }
+                    : {}),
+                  ...(hasWriteRejection ? { allowFileWrite: true } : {}),
+                  ...(hasExecRejection ? { allowShellExec: true } : {}),
+                  ...(hasNetworkRejection ? { allowNetwork: true } : {}),
+                },
+              });
+            }
+          } catch (patchErr) {
+            // Non-fatal: log but proceed; the wakeup will still fire
+            console.warn("permission_request approve: failed to patch agent config:", patchErr);
+          }
+        }
+      }
+
       return { approval: updated, applied };
     },
 

@@ -87,13 +87,17 @@ async function ensureCodexSkillsInjected(onLog: AdapterExecutionContext["onLog"]
     const source = path.join(skillsDir, entry.name);
     const target = path.join(skillsHome, entry.name);
     const existing = await fs.lstat(target).catch(() => null);
-    if (existing) continue;
+    if (existing && !existing.isSymbolicLink()) continue;
+
+    if (existing?.isSymbolicLink()) {
+      await fs.rm(target, { recursive: true, force: true });
+    }
 
     try {
-      await fs.symlink(source, target);
+      await fs.cp(source, target, { recursive: true });
       await onLog(
         "stderr",
-        `[paperclip] Injected Codex skill "${entry.name}" into ${skillsHome}\n`,
+        `[paperclip] Injected Codex skill "${entry.name}" into ${skillsHome} (copied)\n`,
       );
     } catch (err) {
       await onLog(
@@ -118,10 +122,24 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     asString(config.reasoningEffort, ""),
   );
   const search = asBoolean(config.search, false);
-  const bypass = asBoolean(
-    config.dangerouslyBypassApprovalsAndSandbox,
-    asBoolean(config.dangerouslyBypassSandbox, false),
-  );
+  const allowFileRead = asBoolean(config.allowFileRead, false);
+  const allowFileWrite = asBoolean(config.allowFileWrite, false);
+  const allowNetwork = asBoolean(config.allowNetwork, false);
+  const allowShellExec = asBoolean(config.allowShellExec, false);
+  const allowedFilePathsRaw = asString(config.allowedFilePaths, "");
+  const allowedFilePaths = allowedFilePathsRaw
+    ? allowedFilePathsRaw.split(/[,\n]/).map((s) => s.trim()).filter(Boolean)
+    : [];
+  const bypass =
+    asBoolean(
+      config.dangerouslyBypassApprovalsAndSandbox,
+      asBoolean(config.dangerouslyBypassSandbox, false),
+    ) ||
+    allowedFilePaths.length > 0 ||
+    allowFileRead ||
+    allowFileWrite ||
+    allowNetwork ||
+    allowShellExec;
 
   const workspaceContext = parseObject(context.paperclipWorkspace);
   const workspaceCwd = asString(workspaceContext.cwd, "");
@@ -149,9 +167,21 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     : [];
   const runtimePrimaryUrl = asString(context.paperclipRuntimePrimaryUrl, "");
   const configuredCwd = asString(config.cwd, "");
-  const useConfiguredInsteadOfAgentHome = workspaceSource === "agent_home" && configuredCwd.length > 0;
+  const workspaceIsEffectiveFallback = workspaceContext.isEffectiveFallback === true;
+  const useConfiguredInsteadOfAgentHome = configuredCwd.length > 0 && (workspaceSource === "agent_home" || workspaceIsEffectiveFallback);
+  // When in a fallback scenario, probe workspace hint cwds — the project directory may
+  // have become accessible since resolveWorkspaceForRun ran, or configuredCwd differs.
+  let workspaceHintCwd = "";
+  if (workspaceIsEffectiveFallback || workspaceSource === "agent_home") {
+    for (const hint of workspaceHints) {
+      const h = typeof hint.cwd === "string" && hint.cwd.trim().length > 0 ? hint.cwd.trim() : "";
+      if (!h) continue;
+      const exists = await fs.stat(h).then((s) => s.isDirectory()).catch(() => false);
+      if (exists) { workspaceHintCwd = h; break; }
+    }
+  }
   const effectiveWorkspaceCwd = useConfiguredInsteadOfAgentHome ? "" : workspaceCwd;
-  const cwd = effectiveWorkspaceCwd || configuredCwd || process.cwd();
+  const cwd = workspaceHintCwd || effectiveWorkspaceCwd || configuredCwd || process.cwd();
   await ensureAbsoluteDirectory(cwd, { createIfMissing: true });
   await ensureCodexSkillsInjected(onLog);
   const envConfig = parseObject(config.env);
@@ -310,7 +340,16 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     run: { id: runId, source: "on_demand" },
     context,
   });
-  const prompt = `${instructionsPrefix}${renderedPrompt}`;
+  const allowedPathsNote =
+    allowedFilePaths.length > 0
+      ? `Explicitly permitted file paths for this run:\n${allowedFilePaths.map((p) => `  - ${p}`).join("\n")}\n\n`
+      : "";
+  const toolInputContractNote =
+    "Tool-input contract reminder:\n" +
+    "- Do not call Read without a filePath.\n" +
+    "- filePath must be a non-empty absolute path string.\n" +
+    "- If a path is unknown, discover it first via listing/search before calling Read.\n\n";
+  const prompt = `${instructionsPrefix}${allowedPathsNote}${toolInputContractNote}${renderedPrompt}`;
 
   const buildArgs = (resumeSessionId: string | null) => {
     const args = ["exec", "--json"];

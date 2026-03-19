@@ -170,6 +170,10 @@ export interface HireApprovedHookResult {
   detail?: Record<string, unknown>;
 }
 
+export interface AdapterModelDiscoveryInput {
+  adapterConfig?: Record<string, unknown>;
+}
+
 export interface ServerAdapterModule {
   type: string;
   execute(ctx: AdapterExecutionContext): Promise<AdapterExecutionResult>;
@@ -177,7 +181,7 @@ export interface ServerAdapterModule {
   sessionCodec?: AdapterSessionCodec;
   supportsLocalAgentJwt?: boolean;
   models?: AdapterModel[];
-  listModels?: () => Promise<AdapterModel[]>;
+  listModels?: (input?: AdapterModelDiscoveryInput) => Promise<AdapterModel[]>;
   agentConfigurationDoc?: string;
   /**
    * Optional lifecycle hook when an agent is approved/hired (join-request or hire_agent approval).
@@ -229,6 +233,11 @@ export interface CreateConfigValues {
   thinkingEffort: string;
   chrome: boolean;
   dangerouslySkipPermissions: boolean;
+  allowFileRead: boolean;
+  allowFileWrite: boolean;
+  allowNetwork: boolean;
+  allowShellExec: boolean;
+  allowedFilePaths?: string;
   search: boolean;
   dangerouslyBypassSandbox: boolean;
   command: string;

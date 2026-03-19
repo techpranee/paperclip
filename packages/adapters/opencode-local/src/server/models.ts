@@ -7,6 +7,7 @@ import {
 } from "@paperclipai/adapter-utils/server-utils";
 
 const MODELS_CACHE_TTL_MS = 60_000;
+const OPENAI_COMPAT_MODELS_TIMEOUT_MS = 5_000;
 
 function resolveOpenCodeCommand(input: unknown): string {
   const envOverride =
@@ -98,6 +99,32 @@ function pruneExpiredDiscoveryCache(now: number) {
   }
 }
 
+async function fetchModelsFromOpenAICompatEndpoint(baseUrl: string): Promise<AdapterModel[]> {
+  try {
+    const url = baseUrl.replace(/\/+$/, "") + "/models";
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), OPENAI_COMPAT_MODELS_TIMEOUT_MS);
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+      if (!response.ok) return [];
+      const data = (await response.json()) as { data?: unknown };
+      if (!Array.isArray(data.data)) return [];
+      const models: AdapterModel[] = [];
+      for (const item of data.data) {
+        if (typeof item !== "object" || item === null) continue;
+        const id = (item as { id?: unknown }).id;
+        if (typeof id !== "string" || !id.trim()) continue;
+        models.push({ id: `openai/${id.trim()}`, label: `openai/${id.trim()}` });
+      }
+      return models;
+    } finally {
+      clearTimeout(timeout);
+    }
+  } catch {
+    return [];
+  }
+}
+
 export async function discoverOpenCodeModels(input: {
   command?: unknown;
   cwd?: unknown;
@@ -182,9 +209,31 @@ export async function ensureOpenCodeModelConfiguredAndAvailable(input: {
   return models;
 }
 
-export async function listOpenCodeModels(): Promise<AdapterModel[]> {
+export async function listOpenCodeModels(input?: { adapterConfig?: Record<string, unknown> }): Promise<AdapterModel[]> {
   try {
-    return await discoverOpenCodeModelsCached();
+    const cfg = typeof input?.adapterConfig === "object" && input.adapterConfig !== null
+      ? input.adapterConfig
+      : {};
+    const command = typeof cfg.command === "string" ? cfg.command : undefined;
+    const cwd = typeof cfg.cwd === "string" ? cfg.cwd : undefined;
+    const env = normalizeEnv(
+      typeof cfg.env === "object" && cfg.env !== null && !Array.isArray(cfg.env) ? cfg.env : {},
+    );
+    const discovered = await discoverOpenCodeModelsCached({
+      ...(command ? { command } : {}),
+      ...(cwd ? { cwd } : {}),
+      ...(Object.keys(env).length > 0 ? { env } : {}),
+    });
+
+    const openaiBaseUrl = env.OPENAI_BASE_URL;
+    if (openaiBaseUrl) {
+      const extra = await fetchModelsFromOpenAICompatEndpoint(openaiBaseUrl);
+      if (extra.length > 0) {
+        return sortModels(dedupeModels([...discovered, ...extra]));
+      }
+    }
+
+    return discovered;
   } catch {
     return [];
   }

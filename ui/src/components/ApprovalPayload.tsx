@@ -1,13 +1,15 @@
-import { UserPlus, Lightbulb, ShieldCheck } from "lucide-react";
+import { UserPlus, Lightbulb, ShieldAlert, ShieldCheck } from "lucide-react";
 
 export const typeLabel: Record<string, string> = {
   hire_agent: "Hire Agent",
   approve_ceo_strategy: "CEO Strategy",
+  permission_request: "Permission Request",
 };
 
 export const typeIcon: Record<string, typeof UserPlus> = {
   hire_agent: UserPlus,
   approve_ceo_strategy: Lightbulb,
+  permission_request: ShieldAlert,
 };
 
 export const defaultTypeIcon = ShieldCheck;
@@ -69,7 +71,35 @@ export function CeoStrategyPayload({ payload }: { payload: Record<string, unknow
   );
 }
 
+export function PermissionRequestPayload({ payload }: { payload: Record<string, unknown> }) {
+  const rejections = Array.isArray(payload.rejections)
+    ? (payload.rejections as { permissionType: string; path: string }[])
+    : [];
+  return (
+    <div className="mt-3 space-y-1.5 text-sm">
+      <p className="text-muted-foreground text-xs mb-2">
+        The following permissions were rejected during a run and need board approval:
+      </p>
+      {rejections.map((r, i) => (
+        <div key={i} className="flex items-center gap-2">
+          <span className="font-mono text-xs bg-amber-500/10 text-amber-600 dark:text-amber-400 px-1.5 py-0.5 rounded capitalize">
+            {r.permissionType}
+          </span>
+          <span className="font-mono text-xs text-muted-foreground truncate">{r.path}</span>
+        </div>
+      ))}
+      {rejections.length === 0 && (
+        <p className="text-muted-foreground text-xs italic">No rejection details available.</p>
+      )}
+      <p className="text-muted-foreground text-xs mt-2 pt-2 border-t border-border">
+        Approving will grant access to these paths and wake the agent to retry.
+      </p>
+    </div>
+  );
+}
+
 export function ApprovalPayloadRenderer({ type, payload }: { type: string; payload: Record<string, unknown> }) {
   if (type === "hire_agent") return <HireAgentPayload payload={payload} />;
+  if (type === "permission_request") return <PermissionRequestPayload payload={payload} />;
   return <CeoStrategyPayload payload={payload} />;
 }

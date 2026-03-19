@@ -1,4 +1,4 @@
-import type { ServerAdapterModule } from "./types.js";
+import type { AdapterModelDiscoveryInput, ServerAdapterModule } from "./types.js";
 import {
   execute as claudeExecute,
   testEnvironment as claudeTestEnvironment,
@@ -49,6 +49,7 @@ import {
 import {
   agentConfigurationDoc as piAgentConfigurationDoc,
 } from "@paperclipai/adapter-pi-local";
+import { listClaudeModels } from "./claude-models.js";
 import { listCodexModels } from "./codex-models.js";
 import { listCursorModels } from "./cursor-models.js";
 import { processAdapter } from "./process/index.js";
@@ -60,6 +61,7 @@ const claudeLocalAdapter: ServerAdapterModule = {
   testEnvironment: claudeTestEnvironment,
   sessionCodec: claudeSessionCodec,
   models: claudeModels,
+  listModels: listClaudeModels,
   supportsLocalAgentJwt: true,
   agentConfigurationDoc: claudeAgentConfigurationDoc,
 };
@@ -150,11 +152,14 @@ export function getServerAdapter(type: string): ServerAdapterModule {
   return adapter;
 }
 
-export async function listAdapterModels(type: string): Promise<{ id: string; label: string }[]> {
+export async function listAdapterModels(
+  type: string,
+  input?: AdapterModelDiscoveryInput,
+): Promise<{ id: string; label: string }[]> {
   const adapter = adaptersByType.get(type);
   if (!adapter) return [];
   if (adapter.listModels) {
-    const discovered = await adapter.listModels();
+    const discovered = await adapter.listModels(input);
     if (discovered.length > 0) return discovered;
   }
   return adapter.models ?? [];

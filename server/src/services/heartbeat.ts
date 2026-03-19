@@ -7,6 +7,7 @@ import {
   agentRuntimeState,
   agentTaskSessions,
   agentWakeupRequests,
+  approvals,
   heartbeatRunEvents,
   heartbeatRuns,
   issues,
@@ -128,6 +129,8 @@ interface ParsedIssueAssigneeAdapterOverrides {
 export type ResolvedWorkspaceForRun = {
   cwd: string;
   source: "project_primary" | "task_session" | "agent_home";
+  /** True when source is project_primary but the resolved cwd is a fallback (agent home), not the actual project directory. Adapters use this to prefer their configured cwd over the fallback. */
+  isEffectiveFallback?: boolean;
   projectId: string | null;
   workspaceId: string | null;
   repoUrl: string | null;
@@ -291,6 +294,35 @@ function deriveCommentId(
     readNonEmptyString(payload?.commentId) ??
     null
   );
+}
+
+export function getRetryFailedRunSkipReason(input: {
+  reason: string | null | undefined;
+  issue:
+    | {
+        status?: unknown;
+        assigneeAgentId?: unknown;
+      }
+    | null
+    | undefined;
+  agentId: string;
+}) {
+  if (readNonEmptyString(input.reason) !== "retry_failed_run") return null;
+
+  const issue = input.issue;
+  if (!issue) return null;
+
+  const status = readNonEmptyString(issue.status);
+  if (status === "done" || status === "cancelled") {
+    return "retry_failed_run_issue_closed";
+  }
+
+  const assigneeAgentId = readNonEmptyString(issue.assigneeAgentId);
+  if (assigneeAgentId && assigneeAgentId !== input.agentId) {
+    return "retry_failed_run_issue_reassigned";
+  }
+
+  return null;
 }
 
 function enrichWakeContextSnapshot(input: {
@@ -671,6 +703,7 @@ export function heartbeatService(db: Db) {
       return {
         cwd: fallbackCwd,
         source: "project_primary" as const,
+        isEffectiveFallback: true,
         projectId: resolvedProjectId,
         workspaceId: projectWorkspaceRows[0]?.id ?? null,
         repoUrl: projectWorkspaceRows[0]?.repoUrl ?? null,
@@ -1305,6 +1338,7 @@ export function heartbeatService(db: Db) {
     context.paperclipWorkspace = {
       cwd: executionWorkspace.cwd,
       source: executionWorkspace.source,
+      isEffectiveFallback: resolvedWorkspace.isEffectiveFallback ?? false,
       mode: executionWorkspaceMode,
       strategy: executionWorkspace.strategy,
       projectId: executionWorkspace.projectId,
@@ -1349,6 +1383,7 @@ export function heartbeatService(db: Db) {
     let handle: RunLogHandle | null = null;
     let stdoutExcerpt = "";
     let stderrExcerpt = "";
+    const detectedPermissionRejections: { permissionType: string; path: string }[] = [];
     try {
       const startedAt = run.startedAt ?? new Date();
       const runningWithSession = await db
@@ -1411,6 +1446,14 @@ export function heartbeatService(db: Db) {
         if (stream === "stdout") stdoutExcerpt = appendExcerpt(stdoutExcerpt, sanitizedChunk);
         if (stream === "stderr") stderrExcerpt = appendExcerpt(stderrExcerpt, sanitizedChunk);
         const ts = new Date().toISOString();
+
+        // Detect CLI permission rejection lines (e.g. Codex: "! permission requested: read (/path); auto-rejecting")
+        for (const line of sanitizedChunk.split("\n")) {
+          const match = line.match(/! permission requested: (\w+) \(([^)]+)\); auto-rejecting/);
+          if (match) {
+            detectedPermissionRejections.push({ permissionType: match[1], path: match[2] });
+          }
+        }
 
         if (handle) {
           await runLogStore.append(handle, {
@@ -1726,6 +1769,34 @@ export function heartbeatService(db: Db) {
         }
       }
       await finalizeAgentStatus(agent.id, outcome);
+
+      // After each run, surface any CLI-rejected permissions as a board approval request
+      if (detectedPermissionRejections.length > 0) {
+        try {
+          // Deduplicate by permissionType+path
+          const seen = new Set<string>();
+          const uniqueRejections = detectedPermissionRejections.filter((r) => {
+            const key = `${r.permissionType}:${r.path}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+          await db.insert(approvals).values({
+            companyId: run.companyId,
+            type: "permission_request",
+            requestedByAgentId: agent.id,
+            status: "pending",
+            payload: {
+              rejections: uniqueRejections,
+              runId: run.id,
+              linkedIssueId: issueId ?? null,
+            },
+            updatedAt: new Date(),
+          });
+        } catch (approvalErr) {
+          logger.warn({ err: approvalErr, runId }, "failed to create permission_request approval");
+        }
+      }
     } catch (err) {
       const message = redactCurrentUserText(err instanceof Error ? err.message : "Unknown adapter failure");
       logger.error({ err, runId }, "heartbeat execution failed");
@@ -1754,6 +1825,32 @@ export function heartbeatService(db: Db) {
         error: message,
       });
 
+      // Surface any rejected permissions from a failed run too
+      if (detectedPermissionRejections.length > 0) {
+        try {
+          const seen = new Set<string>();
+          const uniqueRejections = detectedPermissionRejections.filter((r) => {
+            const key = `${r.permissionType}:${r.path}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+          await db.insert(approvals).values({
+            companyId: run.companyId,
+            type: "permission_request",
+            requestedByAgentId: agent.id,
+            status: "pending",
+            payload: {
+              rejections: uniqueRejections,
+              runId: run.id,
+              linkedIssueId: issueId ?? null,
+            },
+            updatedAt: new Date(),
+          });
+        } catch (approvalErr) {
+          logger.warn({ err: approvalErr, runId }, "failed to create permission_request approval after error");
+        }
+      }
       if (failedRun) {
         await appendRunEvent(failedRun, seq++, {
           eventType: "error",
@@ -2000,6 +2097,27 @@ export function heartbeatService(db: Db) {
     if (source !== "timer" && !policy.wakeOnDemand) {
       await writeSkippedRequest("heartbeat.wakeOnDemand.disabled");
       return null;
+    }
+
+    if (issueId) {
+      const retryIssue = await db
+        .select({
+          status: issues.status,
+          assigneeAgentId: issues.assigneeAgentId,
+        })
+        .from(issues)
+        .where(and(eq(issues.id, issueId), eq(issues.companyId, agent.companyId)))
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      const retrySkipReason = getRetryFailedRunSkipReason({
+        reason,
+        issue: retryIssue,
+        agentId,
+      });
+      if (retrySkipReason) {
+        await writeSkippedRequest(retrySkipReason);
+        return null;
+      }
     }
 
     const bypassIssueExecutionLock =

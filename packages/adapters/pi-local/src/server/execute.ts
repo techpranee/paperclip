@@ -71,13 +71,17 @@ async function ensurePiSkillsInjected(onLog: AdapterExecutionContext["onLog"]) {
     const source = path.join(skillsDir, entry.name);
     const target = path.join(piSkillsHome, entry.name);
     const existing = await fs.lstat(target).catch(() => null);
-    if (existing) continue;
+    if (existing && !existing.isSymbolicLink()) continue;
+
+    if (existing?.isSymbolicLink()) {
+      await fs.rm(target, { recursive: true, force: true });
+    }
 
     try {
-      await fs.symlink(source, target);
+      await fs.cp(source, target, { recursive: true });
       await onLog(
         "stderr",
-        `[paperclip] Injected Pi skill "${entry.name}" into ${piSkillsHome}\n`,
+        `[paperclip] Injected Pi skill "${entry.name}" into ${piSkillsHome} (copied)\n`,
       );
     } catch (err) {
       await onLog(
@@ -125,9 +129,21 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       )
     : [];
   const configuredCwd = asString(config.cwd, "");
-  const useConfiguredInsteadOfAgentHome = workspaceSource === "agent_home" && configuredCwd.length > 0;
+  const workspaceIsEffectiveFallback = workspaceContext.isEffectiveFallback === true;
+  const useConfiguredInsteadOfAgentHome = configuredCwd.length > 0 && (workspaceSource === "agent_home" || workspaceIsEffectiveFallback);
+  // When in a fallback scenario, probe workspace hint cwds — the project directory may
+  // have become accessible since resolveWorkspaceForRun ran, or configuredCwd differs.
+  let workspaceHintCwd = "";
+  if (workspaceIsEffectiveFallback || workspaceSource === "agent_home") {
+    for (const hint of workspaceHints) {
+      const h = typeof hint.cwd === "string" && hint.cwd.trim().length > 0 ? hint.cwd.trim() : "";
+      if (!h) continue;
+      const exists = await fs.stat(h).then((s) => s.isDirectory()).catch(() => false);
+      if (exists) { workspaceHintCwd = h; break; }
+    }
+  }
   const effectiveWorkspaceCwd = useConfiguredInsteadOfAgentHome ? "" : workspaceCwd;
-  const cwd = effectiveWorkspaceCwd || configuredCwd || process.cwd();
+  const cwd = workspaceHintCwd || effectiveWorkspaceCwd || configuredCwd || process.cwd();
   await ensureAbsoluteDirectory(cwd, { createIfMissing: true });
   
   // Ensure sessions directory exists

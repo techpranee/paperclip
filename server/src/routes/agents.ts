@@ -12,6 +12,7 @@ import {
   isUuidLike,
   resetAgentSessionSchema,
   testAdapterEnvironmentSchema,
+  discoverAdapterModelsSchema,
   type InstanceSchedulerHeartbeatAgent,
   updateAgentPermissionsSchema,
   updateAgentInstructionsPathSchema,
@@ -42,8 +43,10 @@ import {
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@paperclipai/adapter-cursor-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@paperclipai/adapter-gemini-local";
 import { ensureOpenCodeModelConfiguredAndAvailable } from "@paperclipai/adapter-opencode-local/server";
+import { loadConfig } from "../config.js";
 
 export function agentRoutes(db: Db) {
+  const deploymentMode = loadConfig().deploymentMode;
   const DEFAULT_INSTRUCTIONS_PATH_KEYS: Record<string, string> = {
     claude_local: "instructionsFilePath",
     codex_local: "instructionsFilePath",
@@ -61,6 +64,30 @@ export function agentRoutes(db: Db) {
   const issueApprovalsSvc = issueApprovalService(db);
   const secretsSvc = secretService(db);
   const strictSecretsMode = process.env.PAPERCLIP_SECRETS_STRICT_MODE === "true";
+
+  function isLikelyHostAbsolutePath(value: string): boolean {
+    const trimmed = value.trim();
+    return (
+      /^\/Users\//.test(trimmed) ||
+      /^\/home\//.test(trimmed) ||
+      /^\/root\//.test(trimmed) ||
+      /^[A-Za-z]:[\\/]/.test(trimmed)
+    );
+  }
+
+  function assertPortableInstructionsPaths(adapterConfig: Record<string, unknown>) {
+    if (deploymentMode !== "authenticated") return;
+    for (const key of KNOWN_INSTRUCTIONS_PATH_KEYS) {
+      const rawValue = adapterConfig[key];
+      if (typeof rawValue !== "string") continue;
+      const trimmed = rawValue.trim();
+      if (!trimmed) continue;
+      if (!isLikelyHostAbsolutePath(trimmed)) continue;
+      throw unprocessable(
+        `${key} must not point to a host-local absolute path in authenticated deployments. Store durable instructions in promptTemplate or use a container-valid mounted path such as /paperclip/...`,
+      );
+    }
+  }
 
   function canCreateAgents(agent: { role: string; permissions: Record<string, unknown> | null | undefined }) {
     if (!agent.permissions || typeof agent.permissions !== "object") return false;
@@ -424,6 +451,33 @@ export function agentRoutes(db: Db) {
   });
 
   router.post(
+    "/companies/:companyId/adapters/:type/models",
+    validate(discoverAdapterModelsSchema),
+    async (req, res) => {
+      const companyId = req.params.companyId as string;
+      assertCompanyAccess(req, companyId);
+      const type = req.params.type as string;
+
+      const inputAdapterConfig =
+        (req.body?.adapterConfig ?? {}) as Record<string, unknown>;
+      const normalizedAdapterConfig = await secretsSvc.normalizeAdapterConfigForPersistence(
+        companyId,
+        inputAdapterConfig,
+        { strictMode: strictSecretsMode },
+      );
+      const { config: runtimeAdapterConfig } = await secretsSvc.resolveAdapterConfigForRuntime(
+        companyId,
+        normalizedAdapterConfig,
+      );
+
+      const models = await listAdapterModels(type, {
+        adapterConfig: runtimeAdapterConfig,
+      });
+      res.json(models);
+    },
+  );
+
+  router.post(
     "/companies/:companyId/adapters/:type/test-environment",
     validate(testAdapterEnvironmentSchema),
     async (req, res) => {
@@ -741,6 +795,7 @@ export function agentRoutes(db: Db) {
       hireInput.adapterType,
       ((hireInput.adapterConfig ?? {}) as Record<string, unknown>),
     );
+    assertPortableInstructionsPaths(requestedAdapterConfig);
     const normalizedAdapterConfig = await secretsSvc.normalizeAdapterConfigForPersistence(
       companyId,
       requestedAdapterConfig,
@@ -881,6 +936,7 @@ export function agentRoutes(db: Db) {
       req.body.adapterType,
       ((req.body.adapterConfig ?? {}) as Record<string, unknown>),
     );
+    assertPortableInstructionsPaths(requestedAdapterConfig);
     const normalizedAdapterConfig = await secretsSvc.normalizeAdapterConfigForPersistence(
       companyId,
       requestedAdapterConfig,
@@ -987,6 +1043,8 @@ export function agentRoutes(db: Db) {
       nextAdapterConfig[adapterConfigKey] = resolveInstructionsFilePath(req.body.path, existingAdapterConfig);
     }
 
+    assertPortableInstructionsPaths(nextAdapterConfig);
+
     const normalizedAdapterConfig = await secretsSvc.normalizeAdapterConfigForPersistence(
       existing.companyId,
       nextAdapterConfig,
@@ -1079,6 +1137,7 @@ export function agentRoutes(db: Db) {
         requestedAdapterType,
         rawEffectiveAdapterConfig,
       );
+      assertPortableInstructionsPaths(effectiveAdapterConfig);
       const normalizedEffectiveAdapterConfig = await secretsSvc.normalizeAdapterConfigForPersistence(
         existing.companyId,
         effectiveAdapterConfig,

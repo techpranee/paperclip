@@ -45,6 +45,24 @@ function claudeSkillsHome(): string {
   return path.join(os.homedir(), ".claude", "skills");
 }
 
+export function renderOpenCodeToolContractNote(workspaceSource: string): string {
+  const lines = [
+    "OpenCode tool contract reminder:",
+    "- Before overwriting any existing file, read that exact path first.",
+    "- Do not call a write/create tool on an existing file you have not read in this run.",
+    "- If you need to update or append to an existing file, read it first and then edit or overwrite it.",
+    "- If you are not sure about a path, discover it with search/list tools before reading or writing.",
+  ];
+
+  if (workspaceSource === "agent_home") {
+    lines.push(
+      "- This run may be in a fallback workspace; confirm you are touching the intended project path before editing files.",
+    );
+  }
+
+  return `${lines.join("\n")}\n\n`;
+}
+
 async function resolvePaperclipSkillsDir(): Promise<string | null> {
   for (const candidate of PAPERCLIP_SKILLS_CANDIDATES) {
     const isDir = await fs.stat(candidate).then((s) => s.isDirectory()).catch(() => false);
@@ -65,13 +83,17 @@ async function ensureOpenCodeSkillsInjected(onLog: AdapterExecutionContext["onLo
     const source = path.join(skillsDir, entry.name);
     const target = path.join(skillsHome, entry.name);
     const existing = await fs.lstat(target).catch(() => null);
-    if (existing) continue;
+    if (existing && !existing.isSymbolicLink()) continue;
+
+    if (existing?.isSymbolicLink()) {
+      await fs.rm(target, { recursive: true, force: true });
+    }
 
     try {
-      await fs.symlink(source, target);
+      await fs.cp(source, target, { recursive: true });
       await onLog(
         "stderr",
-        `[paperclip] Injected OpenCode skill "${entry.name}" into ${skillsHome}\n`,
+        `[paperclip] Injected OpenCode skill "${entry.name}" into ${skillsHome} (copied)\n`,
       );
     } catch (err) {
       await onLog(
@@ -92,6 +114,10 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const command = asString(config.command, "opencode");
   const model = asString(config.model, "").trim();
   const variant = asString(config.variant, "").trim();
+  const allowedFilePathsRaw = asString(config.allowedFilePaths, "");
+  const allowedFilePaths = allowedFilePathsRaw
+    ? allowedFilePathsRaw.split(/[,\n]/).map((s) => s.trim()).filter(Boolean)
+    : [];
 
   const workspaceContext = parseObject(context.paperclipWorkspace);
   const workspaceCwd = asString(workspaceContext.cwd, "");
@@ -105,9 +131,21 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       )
     : [];
   const configuredCwd = asString(config.cwd, "");
-  const useConfiguredInsteadOfAgentHome = workspaceSource === "agent_home" && configuredCwd.length > 0;
+  const workspaceIsEffectiveFallback = workspaceContext.isEffectiveFallback === true;
+  const useConfiguredInsteadOfAgentHome = configuredCwd.length > 0 && (workspaceSource === "agent_home" || workspaceIsEffectiveFallback);
+  // When in a fallback scenario, probe workspace hint cwds — the project directory may
+  // have become accessible since resolveWorkspaceForRun ran, or configuredCwd differs.
+  let workspaceHintCwd = "";
+  if (workspaceIsEffectiveFallback || workspaceSource === "agent_home") {
+    for (const hint of workspaceHints) {
+      const h = typeof hint.cwd === "string" && hint.cwd.trim().length > 0 ? hint.cwd.trim() : "";
+      if (!h) continue;
+      const exists = await fs.stat(h).then((s) => s.isDirectory()).catch(() => false);
+      if (exists) { workspaceHintCwd = h; break; }
+    }
+  }
   const effectiveWorkspaceCwd = useConfiguredInsteadOfAgentHome ? "" : workspaceCwd;
-  const cwd = effectiveWorkspaceCwd || configuredCwd || process.cwd();
+  const cwd = workspaceHintCwd || effectiveWorkspaceCwd || configuredCwd || process.cwd();
   await ensureAbsoluteDirectory(cwd, { createIfMissing: true });
   await ensureOpenCodeSkillsInjected(onLog);
 
@@ -179,6 +217,19 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     if (fromExtraArgs.length > 0) return fromExtraArgs;
     return asStringArray(config.args);
   })();
+  const sanitizedExtraArgs = (() => {
+    const out: string[] = [];
+    for (let index = 0; index < extraArgs.length; index += 1) {
+      const value = extraArgs[index] ?? "";
+      if (value === "--dir") {
+        index += 1;
+        continue;
+      }
+      if (value.startsWith("--dir=")) continue;
+      out.push(value);
+    }
+    return out;
+  })();
 
   const runtimeSessionParams = parseObject(runtime.sessionParams);
   const runtimeSessionId = asString(runtimeSessionParams.sessionId, runtime.sessionId ?? "");
@@ -242,14 +293,25 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     run: { id: runId, source: "on_demand" },
     context,
   });
-  const prompt = `${instructionsPrefix}${renderedPrompt}`;
+  const openCodeToolContractNote = renderOpenCodeToolContractNote(workspaceSource);
+  const allowedPathsNote =
+    allowedFilePaths.length > 0
+      ? `Explicitly permitted file paths for this run:\n${allowedFilePaths.map((p) => `  - ${p}`).join("\n")}\n\n`
+      : "";
+  const toolInputContractNote =
+    "Tool-input contract reminder:\n" +
+    "- Do not call Read without a filePath.\n" +
+    "- filePath must be a non-empty absolute path string.\n" +
+    "- If a path is unknown, discover it first via listing/search before calling Read.\n\n";
+  const prompt = `${instructionsPrefix}${allowedPathsNote}${openCodeToolContractNote}${toolInputContractNote}${renderedPrompt}`;
 
   const buildArgs = (resumeSessionId: string | null) => {
     const args = ["run", "--format", "json"];
     if (resumeSessionId) args.push("--session", resumeSessionId);
     if (model) args.push("--model", model);
     if (variant) args.push("--variant", variant);
-    if (extraArgs.length > 0) args.push(...extraArgs);
+    if (sanitizedExtraArgs.length > 0) args.push(...sanitizedExtraArgs);
+    args.push("--dir", cwd);
     return args;
   };
 

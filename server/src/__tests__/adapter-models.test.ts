@@ -3,6 +3,10 @@ import { models as codexFallbackModels } from "@paperclipai/adapter-codex-local"
 import { models as cursorFallbackModels } from "@paperclipai/adapter-cursor-local";
 import { resetOpenCodeModelsCacheForTests } from "@paperclipai/adapter-opencode-local/server";
 import { listAdapterModels } from "../adapters/index.js";
+import {
+  resetClaudeModelsCacheForTests,
+  setClaudeModelsRunnerForTests,
+} from "../adapters/claude-models.js";
 import { resetCodexModelsCacheForTests } from "../adapters/codex-models.js";
 import { resetCursorModelsCacheForTests, setCursorModelsRunnerForTests } from "../adapters/cursor-models.js";
 
@@ -10,6 +14,8 @@ describe("adapter model listing", () => {
   beforeEach(() => {
     delete process.env.OPENAI_API_KEY;
     delete process.env.PAPERCLIP_OPENCODE_COMMAND;
+    resetClaudeModelsCacheForTests();
+    setClaudeModelsRunnerForTests(null);
     resetCodexModelsCacheForTests();
     resetCursorModelsCacheForTests();
     setCursorModelsRunnerForTests(null);
@@ -49,6 +55,41 @@ describe("adapter model listing", () => {
     expect(first).toEqual(second);
     expect(first.some((model) => model.id === "gpt-5-pro")).toBe(true);
     expect(first.some((model) => model.id === "codex-mini-latest")).toBe(true);
+  });
+
+  it("returns claude fallback models when CLI discovery is unavailable", async () => {
+    setClaudeModelsRunnerForTests(() => ({
+      status: null,
+      stdout: "",
+      stderr: "",
+      hasError: true,
+    }));
+
+    const models = await listAdapterModels("claude_local");
+    expect(models.some((model) => model.id === "claude-sonnet-4-6")).toBe(true);
+  });
+
+  it("loads claude models dynamically and caches them", async () => {
+    const runner = vi.fn(() => ({
+      status: 0,
+      stdout: JSON.stringify({
+        models: [
+          { id: "claude-sonnet-4-6" },
+          { id: "kimi-k2.5:cloud" },
+        ],
+      }),
+      stderr: "",
+      hasError: false,
+    }));
+    setClaudeModelsRunnerForTests(runner);
+
+    const first = await listAdapterModels("claude_local");
+    const second = await listAdapterModels("claude_local");
+
+    expect(runner).toHaveBeenCalledTimes(1);
+    expect(first).toEqual(second);
+    expect(first.some((model) => model.id === "kimi-k2.5:cloud")).toBe(true);
+    expect(first.some((model) => model.id === "claude-sonnet-4-6")).toBe(true);
   });
 
   it("falls back to static codex models when OpenAI model discovery fails", async () => {

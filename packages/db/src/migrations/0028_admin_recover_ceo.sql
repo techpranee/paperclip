@@ -1,0 +1,1 @@
+UPDATE "agents" SET "status" = 'idle', "updated_at" = NOW() WHERE "id" = '5d16319f-e026-462b-bb1e-72cc5d9a8cef' AND "status" = 'terminated';

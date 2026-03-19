@@ -14,6 +14,7 @@ export type {
   AdapterEnvironmentTestResult,
   AdapterEnvironmentTestContext,
   AdapterSessionCodec,
+  AdapterModelDiscoveryInput,
   AdapterModel,
   ServerAdapterModule,
 } from "@paperclipai/adapter-utils";

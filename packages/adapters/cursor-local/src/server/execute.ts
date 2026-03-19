@@ -78,6 +78,23 @@ function renderPaperclipEnvNote(env: Record<string, string>): string {
   ].join("\n");
 }
 
+function renderCursorToolContractNote(workspaceSource: string): string {
+  const lines = [
+    "Cursor tool contract reminder:",
+    "- When calling Read, always pass an object with a non-empty `filePath` string.",
+    "- Never call Read with empty input ({}).",
+    "- If you need to discover paths first, use Find/Ls/Grep before calling Read.",
+  ];
+
+  if (workspaceSource === "agent_home") {
+    lines.push(
+      "- This run may be in a fallback workspace; discover actual project files before using Read.",
+    );
+  }
+
+  return `${lines.join("\n")}\n\n`;
+}
+
 function cursorSkillsHome(): string {
   return path.join(os.homedir(), ".cursor", "skills");
 }
@@ -93,7 +110,7 @@ async function resolvePaperclipSkillsDir(): Promise<string | null> {
 type EnsureCursorSkillsInjectedOptions = {
   skillsDir?: string | null;
   skillsHome?: string;
-  linkSkill?: (source: string, target: string) => Promise<void>;
+  materializeSkill?: (source: string, target: string) => Promise<void>;
 };
 
 export async function ensureCursorSkillsInjected(
@@ -125,19 +142,23 @@ export async function ensureCursorSkillsInjected(
     return;
   }
 
-  const linkSkill = options.linkSkill ?? ((source: string, target: string) => fs.symlink(source, target));
+  const materializeSkill = options.materializeSkill ?? ((source: string, target: string) => fs.cp(source, target, { recursive: true }));
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     const source = path.join(skillsDir, entry.name);
     const target = path.join(skillsHome, entry.name);
     const existing = await fs.lstat(target).catch(() => null);
-    if (existing) continue;
+    if (existing && !existing.isSymbolicLink()) continue;
+
+    if (existing?.isSymbolicLink()) {
+      await fs.rm(target, { recursive: true, force: true });
+    }
 
     try {
-      await linkSkill(source, target);
+      await materializeSkill(source, target);
       await onLog(
         "stderr",
-        `[paperclip] Injected Cursor skill "${entry.name}" into ${skillsHome}\n`,
+        `[paperclip] Injected Cursor skill "${entry.name}" into ${skillsHome} (copied)\n`,
       );
     } catch (err) {
       await onLog(
@@ -171,9 +192,21 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       )
     : [];
   const configuredCwd = asString(config.cwd, "");
-  const useConfiguredInsteadOfAgentHome = workspaceSource === "agent_home" && configuredCwd.length > 0;
+  const workspaceIsEffectiveFallback = workspaceContext.isEffectiveFallback === true;
+  const useConfiguredInsteadOfAgentHome = configuredCwd.length > 0 && (workspaceSource === "agent_home" || workspaceIsEffectiveFallback);
+  // When in a fallback scenario, probe workspace hint cwds — the project directory may
+  // have become accessible since resolveWorkspaceForRun ran, or configuredCwd differs.
+  let workspaceHintCwd = "";
+  if (workspaceIsEffectiveFallback || workspaceSource === "agent_home") {
+    for (const hint of workspaceHints) {
+      const h = typeof hint.cwd === "string" && hint.cwd.trim().length > 0 ? hint.cwd.trim() : "";
+      if (!h) continue;
+      const exists = await fs.stat(h).then((s) => s.isDirectory()).catch(() => false);
+      if (exists) { workspaceHintCwd = h; break; }
+    }
+  }
   const effectiveWorkspaceCwd = useConfiguredInsteadOfAgentHome ? "" : workspaceCwd;
-  const cwd = effectiveWorkspaceCwd || configuredCwd || process.cwd();
+  const cwd = workspaceHintCwd || effectiveWorkspaceCwd || configuredCwd || process.cwd();
   await ensureAbsoluteDirectory(cwd, { createIfMissing: true });
   await ensureCursorSkillsInjected(onLog);
 
@@ -326,7 +359,8 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     context,
   });
   const paperclipEnvNote = renderPaperclipEnvNote(env);
-  const prompt = `${instructionsPrefix}${paperclipEnvNote}${renderedPrompt}`;
+  const cursorToolContractNote = renderCursorToolContractNote(workspaceSource);
+  const prompt = `${instructionsPrefix}${paperclipEnvNote}${cursorToolContractNote}${renderedPrompt}`;
 
   const buildArgs = (resumeSessionId: string | null) => {
     const args = ["-p", "--output-format", "stream-json", "--workspace", cwd];

@@ -69,6 +69,13 @@ export function buildOpenCodeLocalConfig(v: CreateConfigValues): Record<string, 
     }
   }
   if (Object.keys(env).length > 0) ac.env = env;
+  if (v.allowFileRead) ac.allowFileRead = true;
+  if (v.allowFileWrite) ac.allowFileWrite = true;
+  if (v.allowNetwork) ac.allowNetwork = true;
+  if (v.allowShellExec) ac.allowShellExec = true;
+  if (v.allowedFilePaths && v.allowedFilePaths.trim().length > 0) {
+    ac.allowedFilePaths = v.allowedFilePaths.trim();
+  }
   if (v.command) ac.command = v.command;
   if (v.extraArgs) ac.extraArgs = parseCommaArgs(v.extraArgs);
   return ac;

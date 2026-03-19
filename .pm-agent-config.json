@@ -1,0 +1,14 @@
+{
+  "name": "Project Manager",
+  "id": "9b1e7248-66de-4e81-ae8c-2c9190594888",
+  "adapterType": "opencode_local",
+  "cwd": "/Users/mohanpraneeth/Desktop/Coding/",
+  "instructionsFilePath": "/Users/mohanpraneeth/Desktop/Coding/epro/agents/pm/AGENTS.md",
+  "allowFileRead": true,
+  "allowedFilePaths": "/Users/mohanpraneeth/Desktop/Coding/epro/agents/pm, /Users/mohanpraneeth/Desktop/Coding/epro/agents/pm/, /Users/mohanpraneeth/Desktop/Coding/epro/agents/pm/*, /Users/mohanpraneeth/Desktop/Coding/epro, /Users/mohanpraneeth/Desktop/Coding/epro/, /Users/mohanpraneeth/Desktop/Coding/epro/*, /Users/mohanpraneeth/Desktop/Coding/*",
+  "extraArgs": [
+    "--dir",
+    "/Users/mohanpraneeth/Desktop/Coding/epro"
+  ],
+  "model": "ollama-cloud/kimi-k2.5"
+}

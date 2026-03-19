@@ -87,7 +87,10 @@ export function NewAgent() {
     queryKey: selectedCompanyId
       ? queryKeys.agents.adapterModels(selectedCompanyId, configValues.adapterType)
       : ["agents", "none", "adapter-models", configValues.adapterType],
-    queryFn: () => agentsApi.adapterModels(selectedCompanyId!, configValues.adapterType),
+    queryFn: () =>
+      agentsApi.adapterModels(selectedCompanyId!, configValues.adapterType, {
+        adapterConfig: getUIAdapter(configValues.adapterType).buildAdapterConfig(configValues),
+      }),
     enabled: Boolean(selectedCompanyId),
   });
 

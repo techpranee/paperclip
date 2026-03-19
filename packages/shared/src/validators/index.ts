@@ -31,6 +31,7 @@ export {
   wakeAgentSchema,
   resetAgentSessionSchema,
   testAdapterEnvironmentSchema,
+  discoverAdapterModelsSchema,
   agentPermissionsSchema,
   updateAgentPermissionsSchema,
   type CreateAgent,
@@ -41,6 +42,7 @@ export {
   type WakeAgent,
   type ResetAgentSession,
   type TestAdapterEnvironment,
+  type DiscoverAdapterModels,
   type UpdateAgentPermissions,
 } from "./agent.js";
 
