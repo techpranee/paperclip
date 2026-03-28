@@ -1,38 +1,49 @@
 services:
-  db:
-    image: postgres:17-alpine
-    environment:
-      POSTGRES_USER: paperclip
-      POSTGRES_PASSWORD: paperclip
-      POSTGRES_DB: paperclip
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U paperclip -d paperclip"]
-      interval: 2s
-      timeout: 5s
-      retries: 30
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-
   server:
     build: .
     ports:
       - "3100:3100"
     environment:
-      DATABASE_URL: postgres://paperclip:paperclip@db:5432/paperclip
-      PORT: "3100"
-      SERVE_UI: "true"
-      PAPERCLIP_DEPLOYMENT_MODE: "authenticated"
-      PAPERCLIP_DEPLOYMENT_EXPOSURE: "private"
-      PAPERCLIP_PUBLIC_URL: "${PAPERCLIP_PUBLIC_URL:-http://localhost:3100}"
-      BETTER_AUTH_SECRET: "${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET must be set}"
+      HOST: "${HOST:-0.0.0.0}"
+      PORT: "${PORT:-3100}"
+      SERVE_UI: "${SERVE_UI:-true}"
+      PAPERCLIP_HOME: "${PAPERCLIP_HOME:-/paperclip}"
+
+      DATABASE_URL: "${DATABASE_URL}"
+
+      PAPERCLIP_DEPLOYMENT_MODE: "${PAPERCLIP_DEPLOYMENT_MODE:-authenticated}"
+      PAPERCLIP_DEPLOYMENT_EXPOSURE: "${PAPERCLIP_DEPLOYMENT_EXPOSURE:-private}"
+      PAPERCLIP_PUBLIC_URL: "${PAPERCLIP_PUBLIC_URL}"
+      BETTER_AUTH_SECRET: "${BETTER_AUTH_SECRET}"
+
+      PAPERCLIP_AUTH_BASE_URL_MODE: "${PAPERCLIP_AUTH_BASE_URL_MODE:-explicit}"
+      PAPERCLIP_AUTH_PUBLIC_BASE_URL: "${PAPERCLIP_AUTH_PUBLIC_BASE_URL:-}"
+      PAPERCLIP_ALLOWED_HOSTNAMES: "${PAPERCLIP_ALLOWED_HOSTNAMES:-}"
+      PAPERCLIP_AUTH_DISABLE_SIGN_UP: "${PAPERCLIP_AUTH_DISABLE_SIGN_UP:-false}"
+      BETTER_AUTH_TRUSTED_ORIGINS: "${BETTER_AUTH_TRUSTED_ORIGINS:-}"
+
+      PAPERCLIP_AGENT_JWT_SECRET: "${PAPERCLIP_AGENT_JWT_SECRET:-}"
+      PAPERCLIP_AGENT_JWT_TTL_SECONDS: "${PAPERCLIP_AGENT_JWT_TTL_SECONDS:-172800}"
+      PAPERCLIP_AGENT_JWT_ISSUER: "${PAPERCLIP_AGENT_JWT_ISSUER:-paperclip}"
+      PAPERCLIP_AGENT_JWT_AUDIENCE: "${PAPERCLIP_AGENT_JWT_AUDIENCE:-paperclip-api}"
+
+      PAPERCLIP_SECRETS_MASTER_KEY: "${PAPERCLIP_SECRETS_MASTER_KEY:-}"
+      PAPERCLIP_SECRETS_MASTER_KEY_FILE: "${PAPERCLIP_SECRETS_MASTER_KEY_FILE:-}"
+      PAPERCLIP_SECRETS_STRICT_MODE: "${PAPERCLIP_SECRETS_STRICT_MODE:-false}"
+
+      PAPERCLIP_STORAGE_PROVIDER: "${PAPERCLIP_STORAGE_PROVIDER:-local_disk}"
+      PAPERCLIP_STORAGE_LOCAL_DIR: "${PAPERCLIP_STORAGE_LOCAL_DIR:-}"
+      PAPERCLIP_STORAGE_S3_BUCKET: "${PAPERCLIP_STORAGE_S3_BUCKET:-}"
+      PAPERCLIP_STORAGE_S3_REGION: "${PAPERCLIP_STORAGE_S3_REGION:-}"
+      PAPERCLIP_STORAGE_S3_ENDPOINT: "${PAPERCLIP_STORAGE_S3_ENDPOINT:-}"
+      PAPERCLIP_STORAGE_S3_PREFIX: "${PAPERCLIP_STORAGE_S3_PREFIX:-}"
+      PAPERCLIP_STORAGE_S3_FORCE_PATH_STYLE: "${PAPERCLIP_STORAGE_S3_FORCE_PATH_STYLE:-false}"
+
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
     volumes:
       - paperclip-data:/paperclip
-    depends_on:
-      db:
-        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
-  pgdata:
   paperclip-data:
