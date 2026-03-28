@@ -3,8 +3,6 @@ services:
     build: .
     ports:
       - "3100:3100"
-    networks:
-      - traefik_public
     environment:
       HOST: "${HOST:-0.0.0.0}"
       PORT: "${PORT:-3100}"
