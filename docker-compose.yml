@@ -3,6 +3,8 @@ services:
     build: .
     ports:
       - "3100:3100"
+    networks:
+      - traefik_public
     environment:
       HOST: "${HOST:-0.0.0.0}"
       PORT: "${PORT:-3100}"
@@ -43,7 +45,18 @@ services:
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
     volumes:
       - paperclip-data:/paperclip
+    labels:
+      traefik.enable: "${TRAEFIK_ENABLE:-true}"
+      traefik.http.routers.paperclip.rule: "Host(`${TRAEFIK_HOST}`)"
+      traefik.http.routers.paperclip.entrypoints: "${TRAEFIK_ENTRYPOINTS:-websecure}"
+      traefik.http.routers.paperclip.tls: "${TRAEFIK_TLS:-true}"
+      traefik.http.routers.paperclip.tls.certresolver: "${TRAEFIK_CERTRESOLVER:-letsencrypt}"
+      traefik.http.services.paperclip.loadbalancer.server.port: "3100"
     restart: unless-stopped
 
 volumes:
   paperclip-data:
+
+networks:
+  traefik_public:
+    external: true
