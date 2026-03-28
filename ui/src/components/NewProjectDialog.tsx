@@ -25,6 +25,9 @@ import {
   Plus,
   X,
   HelpCircle,
+  FolderOpen,
+  Github,
+  GitBranch,
 } from "lucide-react";
 import {
   Tooltip,
@@ -72,6 +75,7 @@ export function NewProjectDialog() {
   const [goalIds, setGoalIds] = useState<string[]>([]);
   const [targetDate, setTargetDate] = useState("");
   const [expanded, setExpanded] = useState(false);
+  const [workspaceSetup, setWorkspaceSetup] = useState<WorkspaceSetup>("none");
   const [workspaceLocalPath, setWorkspaceLocalPath] = useState("");
   const [workspaceRepos, setWorkspaceRepos] = useState<RepoDraft[]>([createRepoDraft()]);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
@@ -128,6 +132,7 @@ export function NewProjectDialog() {
     setGoalIds([]);
     setTargetDate("");
     setExpanded(false);
+    setWorkspaceSetup("none");
     setWorkspaceLocalPath("");
     setWorkspaceRepos([createRepoDraft()]);
     setWorkspaceError(null);
