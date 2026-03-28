@@ -19,9 +19,9 @@ Current implementation status:
 
 GitHub Actions owns `pnpm-lock.yaml`.
 
-- Same-repo pull requests that change dependency manifests are auto-refreshed by GitHub Actions before merge.
-- Fork pull requests that change dependency manifests must include the refreshed `pnpm-lock.yaml`.
-- Pull request CI validates lockfile freshness when manifests change and verifies with `--frozen-lockfile`.
+- Do not commit `pnpm-lock.yaml` in pull requests.
+- Pull request CI validates dependency resolution when manifests change.
+- Pushes to `master` regenerate `pnpm-lock.yaml` with `pnpm install --lockfile-only --no-frozen-lockfile`, commit it back if needed, and then run verification with `--frozen-lockfile`.
 
 ## Start Dev
 
@@ -38,6 +38,8 @@ This starts:
 - UI: served by the API server in dev middleware mode (same origin as API)
 
 `pnpm dev` runs the server in watch mode and restarts on changes from workspace packages (including adapter packages). Use `pnpm dev:once` to run without file watching.
+
+`pnpm dev:once` now tracks backend-relevant file changes and pending migrations. When the current boot is stale, the board UI shows a `Restart required` banner. You can also enable guarded auto-restart in `Instance Settings > Experimental`, which waits for queued/running local agent runs to finish before restarting the dev server.
 
 Tailscale/private-auth dev mode:
 
@@ -89,6 +91,10 @@ docker compose -f docker-compose.quickstart.yml up --build
 
 See `doc/DOCKER.md` for API key wiring (`OPENAI_API_KEY` / `ANTHROPIC_API_KEY`) and persistence details.
 
+## Docker For Untrusted PR Review
+
+For a separate review-oriented container that keeps `codex`/`claude` login state in Docker volumes and checks out PRs into an isolated scratch workspace, see `doc/UNTRUSTED-PR-REVIEW.md`.
+
 ## Database in Dev (Auto-Handled)
 
 For local development, leave `DATABASE_URL` unset.
@@ -124,6 +130,10 @@ When a local agent run has no resolved project/session workspace, Paperclip fall
 
 This path honors `PAPERCLIP_HOME` and `PAPERCLIP_INSTANCE_ID` in non-default setups.
 
+For `codex_local`, Paperclip also manages a per-company Codex home under the instance root and seeds it from the shared Codex login/config home (`$CODEX_HOME` or `~/.codex`):
+
+- `~/.paperclip/instances/default/companies/<company-id>/codex-home`
+
 ## Worktree-local Instances
 
 When developing from multiple git worktrees, do not point two Paperclip servers at the same embedded PostgreSQL data directory.
@@ -142,7 +152,7 @@ This command:
 - creates an isolated instance under `~/.paperclip-worktrees/instances/<worktree-id>/`
 - when run inside a linked git worktree, mirrors the effective git hooks into that worktree's private git dir
 - picks a free app port and embedded PostgreSQL port
-- by default seeds the isolated DB in `minimal` mode from your main instance via a logical SQL snapshot
+- by default seeds the isolated DB in `minimal` mode from the current effective Paperclip instance/config (repo-local worktree config when present, otherwise the default instance) via a logical SQL snapshot
 
 Seed modes:
 
@@ -152,7 +162,13 @@ Seed modes:
 
 After `worktree init`, both the server and the CLI auto-load the repo-local `.paperclip/.env` when run inside that worktree, so normal commands like `pnpm dev`, `paperclipai doctor`, and `paperclipai db:backup` stay scoped to the worktree instance.
 
-That repo-local env also sets `PAPERCLIP_IN_WORKTREE=true`, which the server can use for worktree-specific UI behavior such as an alternate favicon.
+That repo-local env also sets:
+
+- `PAPERCLIP_IN_WORKTREE=true`
+- `PAPERCLIP_WORKTREE_NAME=<worktree-name>`
+- `PAPERCLIP_WORKTREE_COLOR=<hex-color>`
+
+The server/UI use those values for worktree-specific branding such as the top banner and dynamically colored favicon.
 
 Print shell exports explicitly when needed:
 
@@ -189,6 +205,17 @@ paperclipai worktree init --from-instance default
 paperclipai worktree init --from-data-dir ~/.paperclip
 paperclipai worktree init --force
 ```
+
+Repair an already-created repo-managed worktree and reseed its isolated instance from the main default install:
+
+```sh
+cd ~/.paperclip/worktrees/PAP-884-ai-commits-component
+pnpm paperclipai worktree init --force --seed-mode minimal \
+  --name PAP-884-ai-commits-component \
+  --from-config ~/.paperclip/instances/default/config.json
+```
+
+That rewrites the worktree-local `.paperclip/config.json` + `.paperclip/.env`, recreates the isolated instance under `~/.paperclip-worktrees/instances/<worktree-id>/`, and preserves the git worktree contents themselves.
 
 **`pnpm paperclipai worktree:make <name> [options]`** — Create `~/NAME` as a git worktree, then initialize an isolated Paperclip instance inside it. This combines `git worktree add` with `worktree init` in a single step.
 
