@@ -37,7 +37,7 @@ RUN test -f server/dist/index.js || (echo "ERROR: server build output missing" &
 FROM base AS production
 WORKDIR /app
 COPY --chown=node:node --from=build /app /app
-RUN curl -fsSL https://ollama.ai/install.sh | sh \
+RUN apt-get update && apt-get install -y ollama && rm -rf /var/lib/apt/lists/* \
   && npm install --global --omit=dev @anthropic-ai/claude-code@latest @openai/codex@latest opencode-ai @google-labs-code/gemini \
   && mkdir -p /paperclip \
   && chown node:node /paperclip
