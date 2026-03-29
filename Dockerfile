@@ -37,16 +37,8 @@ RUN test -f server/dist/index.js || (echo "ERROR: server build output missing" &
 FROM base AS production
 WORKDIR /app
 COPY --chown=node:node --from=build /app /app
-RUN arch="$(dpkg --print-architecture)" \
-  && case "$arch" in \
-    amd64) ollama_asset="ollama-linux-amd64.tar.zst" ;; \
-    arm64) ollama_asset="ollama-linux-arm64.tar.zst" ;; \
-    *) echo "Unsupported architecture for Ollama: $arch" && exit 1 ;; \
-  esac \
-  && curl -fsSL "https://github.com/ollama/ollama/releases/latest/download/${ollama_asset}" -o /tmp/ollama.tar.zst \
-  && tar --zstd -xf /tmp/ollama.tar.zst -C /usr/local \
-  && rm -f /tmp/ollama.tar.zst \
-  && npm install --global --omit=dev @anthropic-ai/claude-code@latest @openai/codex@latest opencode-ai @google-labs-code/gemini \
+RUN OLLAMA_INSTALL_DIR=/usr/local OLLAMA_NO_START=1 curl -fsSL https://ollama.com/install.sh | sh \
+  && npm install --global --omit=dev @anthropic-ai/claude-code@latest @openai/codex@latest opencode-ai @google/gemini-cli \
   && mkdir -p /paperclip \
   && chown node:node /paperclip
 
